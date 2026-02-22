@@ -1,10 +1,19 @@
 /**
  * Parses Ignition Casino hand history text into a structured hand object.
- * Hand history is expected to be pasted from Ignition (table format with
- * Start/End, Player Information, and Hand Session sections).
  */
 
-function parseIgnitionHandHistory(rawText) {
+function parseMoney(s) {
+  if (s == null || s === '') return null;
+  const n = parseFloat(String(s).replace(/[$,]/g, ''), 10);
+  return Number.isNaN(n) ? null : n;
+}
+
+function parseCardList(s) {
+  if (!s || !s.trim()) return [];
+  return s.trim().split(/\s+/).filter(Boolean);
+}
+
+export function parseIgnitionHandHistory(rawText) {
   const lines = rawText
     .trim()
     .split(/\r?\n/)
@@ -25,21 +34,15 @@ function parseIgnitionHandHistory(rawText) {
 
   let i = 0;
 
-  // --- Header: key: value lines ---
   while (i < lines.length) {
     const line = lines[i];
-    if (!line) {
-      i++;
-      continue;
-    }
-    // Hand ID on its own line: #4867060675
+    if (!line) { i++; continue; }
     const handIdMatch = line.match(/^#(\d+)$/);
     if (handIdMatch) {
       result.handId = handIdMatch[1];
       i++;
       continue;
     }
-    // Key: value (same line can have multiple pairs like "Pot Size:  $14.61 Rake:  $0.73")
     const pairRegex = /(\w[\w\s]*?):\s*([$\d.,\w\s-]+?)(?=\s{2,}\w|$)/g;
     let match;
     while ((match = pairRegex.exec(line)) !== null) {
@@ -53,12 +56,10 @@ function parseIgnitionHandHistory(rawText) {
       else if (key === 'Play Mode') result.playMode = value;
       else if (key === 'Table Name') result.tableName = value;
     }
-    // Stop header when we hit "Community cards" or "Player Information"
     if (line === 'Community cards' || line === 'Player Information') break;
     i++;
   }
 
-  // --- Community cards ---
   while (i < lines.length) {
     const line = lines[i];
     if (line === 'Community cards') {
@@ -73,12 +74,10 @@ function parseIgnitionHandHistory(rawText) {
     i++;
   }
 
-  // --- Player Information table ---
   while (i < lines.length) {
     const line = lines[i];
     if (line === 'Player Information') {
       i++;
-      // Next line is header: Position	Seat	Start/End	Total Bet	Win/Loss	Cards Dealt
       if (i < lines.length && lines[i].includes('Position')) i++;
       while (i < lines.length) {
         const row = lines[i];
@@ -90,17 +89,14 @@ function parseIgnitionHandHistory(rawText) {
           const positionClean = position.replace(/\s*\[ME\]\s*$/, '').trim();
           const seat = parseInt(cols[1], 10) || null;
           const startEnd = (cols[2] || '').split('/').map((s) => parseMoney(s.trim()));
-          const totalBet = parseMoney(cols[3]);
-          const winLoss = parseMoney(cols[4]);
-          const cards = cols[5] ? parseCardList(cols[5]) : null;
           result.players.push({
             position: positionClean,
             seat,
             startStack: startEnd[0],
             endStack: startEnd[1],
-            totalBet,
-            winLoss,
-            cards,
+            totalBet: parseMoney(cols[3]),
+            winLoss: parseMoney(cols[4]),
+            cards: cols[5] ? parseCardList(cols[5]) : null,
             isMe,
           });
         }
@@ -111,7 +107,6 @@ function parseIgnitionHandHistory(rawText) {
     i++;
   }
 
-  // --- Hand Session: action list ---
   while (i < lines.length) {
     const line = lines[i];
     if (line === 'Hand Session') {
@@ -120,29 +115,20 @@ function parseIgnitionHandHistory(rawText) {
       let lastAction = null;
       while (i < lines.length) {
         const row = lines[i];
-        if (!row) {
-          i++;
-          continue;
-        }
-        // Line that is only a dollar amount -> attach to previous action
+        if (!row) { i++; continue; }
         const onlyMoney = row.match(/^\$?([\d.]+)$/);
         if (onlyMoney && lastAction) {
           lastAction.amount = parseFloat(onlyMoney[1], 10);
           i++;
           continue;
         }
-        // Split on tab or two+ spaces so we handle both Ignition copy formats
         const cols = row.split(/\t|\s{2,}/).map((c) => c.trim());
         if (cols.length >= 2) {
-          const position = cols[0] || '';
-          const action = cols[1] || '';
-          const timestamp = cols[2] || '';
-          const amountRaw = cols[3];
           lastAction = {
-            position,
-            action,
-            timestamp,
-            amount: amountRaw != null && amountRaw !== '' ? parseMoney(amountRaw) : null,
+            position: cols[0] || '',
+            action: cols[1] || '',
+            timestamp: cols[2] || '',
+            amount: cols[3] != null && cols[3] !== '' ? parseMoney(cols[3]) : null,
           };
           result.actions.push(lastAction);
         }
@@ -154,15 +140,4 @@ function parseIgnitionHandHistory(rawText) {
   }
 
   return result;
-}
-
-function parseMoney(s) {
-  if (s == null || s === '') return null;
-  const n = parseFloat(String(s).replace(/[$,]/g, ''), 10);
-  return Number.isNaN(n) ? null : n;
-}
-
-function parseCardList(s) {
-  if (!s || !s.trim()) return [];
-  return s.trim().split(/\s+/).filter(Boolean);
 }

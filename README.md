@@ -1,71 +1,57 @@
 # AI Poker Coach — Poker Hand Tracker
 
-A simple web app to log and review your poker hands. Everything runs in your browser and data is stored only on your computer (no server or account required).
+A React web app to log and review your poker hands. Everything runs in your browser and data is stored only on your computer (localStorage). Supports importing full hand history from Ignition Casino and a point-and-click card picker.
 
 ---
 
 ## How to run it
 
-1. **Open the app in your browser**
-   - Double-click `index.html`, **or**
-   - Right-click `index.html` → "Open With" → your browser (Chrome, Safari, Firefox, etc.)
+1. **Install dependencies** (one time):
+   ```bash
+   npm install
+   ```
 
-2. **Use the form** to add a hand (your cards, position, action, outcome, optional opponent cards and notes), then click **Save hand**.
+2. **Start the dev server**:
+   ```bash
+   npm run dev
+   ```
+   Then open the URL shown (e.g. http://localhost:5173) in your browser.
 
-3. **View saved hands** in the list below the form. Each row shows one hand; use **Delete** to remove it.
-
-Data is stored in your browser's **local storage**, so it stays even after you close the tab. Clearing your browser data for this site will remove the saved hands.
-
----
-
-## What each file does
-
-### `index.html`
-
-This is the **page** the browser shows.
-
-- **Head:** Sets the page title and loads **Tailwind CSS** from a CDN (a hosted stylesheet). Tailwind gives us utility classes like `rounded-lg`, `bg-white`, so we don't write custom CSS.
-- **Body:**  
-  - A **form** with inputs for: my cards (2), position, action, opponent cards (optional), outcome, notes (optional), and a "Save hand" button.  
-  - A **section** where the list of saved hands will appear (`id="hand-list"`).  
-  - A **script** tag that loads `app.js`, which runs after the page is loaded.
-
-So: **HTML = structure and content** (labels, inputs, buttons, containers).
-
-### `app.js`
-
-This is the **logic** that makes the app work.
-
-- **localStorage:** The browser's built-in way to store data on your machine. We use one key (e.g. `"pokerHands"`) and store a **JSON string** of an array of hand objects. When the page loads or when you save, we **read** or **write** that string.
-- **getHands():** Reads the string from localStorage, parses it to an array, and returns it (or `[]` if empty or invalid).
-- **saveHands(hands):** Takes the array of hands, turns it into a JSON string, and writes it to localStorage.
-- **renderHandList():**  
-  - Gets the current hands from storage.  
-  - Clears the list area in the HTML.  
-  - If there are no hands, shows "No hands saved yet…".  
-  - Otherwise, for each hand (newest first), creates a small "card" block (your cards, position, action, outcome, optional villain cards and notes) and a **Delete** button, and appends it to the list.
-- **Form submit handler:**  
-  - Runs when you click "Save hand".  
-  - Reads the form fields, checks that at least your two cards and outcome are set.  
-  - Builds a **hand object** (with a unique `id`, `createdAt`, and all the form values).  
-  - Appends it to the current array, calls `saveHands()`, then `renderHandList()` to refresh the list, and resets the form.
-- **Delete:** Clicking Delete on a hand removes it from the array, saves, and re-renders the list.
-
-So: **JavaScript = behavior** (saving, loading, displaying, deleting).
-
-### `README.md` (this file)
-
-Explains how to run the app and what each part of the project does.
+3. **Or build for production**:
+   ```bash
+   npm run build
+   ```
+   Then serve the `dist` folder (e.g. with `npm run preview` or any static file server).
 
 ---
 
-## Tech summary
+## Tech stack
 
-| Part            | Role |
-|-----------------|------|
-| **HTML**        | Structure: form fields, labels, buttons, list container. |
-| **Tailwind CSS**| Styling via class names (no separate CSS file). |
-| **JavaScript**  | Read/write localStorage, handle form submit, build and update the hand list. |
-| **localStorage**| Persists your hands in the browser until you clear site data. |
+- **React 18** – UI components and state
+- **Vite** – build tool and dev server
+- **Tailwind CSS** – styling
+- **localStorage** – persistence (same key `pokerHands` as before, so existing data is compatible)
 
-No frameworks, no build step, no server. Just open `index.html` in a browser to use the app.
+---
+
+## Project structure
+
+```
+src/
+  App.jsx           – main app, state, card picker registration
+  main.jsx          – React entry point
+  index.css         – Tailwind + global styles
+  lib/
+    storage.js      – getHands, saveHands, generateId
+    ignitionParser.js – Ignition hand history parser
+  components/
+    CardPicker.jsx  – rank + suit point-and-click picker
+    CardInput.jsx   – card field that uses the picker when focused
+    HandDetailsForm.jsx – my cards, “hand didn’t reach flop”, community cards
+    ImportSection.jsx   – paste Ignition text, parse, preview, hand details, save
+    QuickAddForm.jsx    – quick add hand form
+    HandList.jsx    – list of saved hands
+    HandCard.jsx    – single hand (imported with actions or simple)
+```
+
+The app keeps the same behavior as the original: import hand history (with required my cards and community cards or “hand didn’t reach flop”), quick-add form, saved hands list with expandable actions, and card picker for all card fields.
