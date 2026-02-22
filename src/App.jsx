@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from 'react';
 import { getHands } from './lib/storage.js';
 import { CardPicker } from './components/CardPicker.jsx';
 import { CardInput } from './components/CardInput.jsx';
+import { PositionSelector } from './components/PositionSelector.jsx';
 import { ImportSection } from './components/ImportSection.jsx';
 import { QuickAddForm } from './components/QuickAddForm.jsx';
 import { HandList } from './components/HandList.jsx';
@@ -10,6 +11,8 @@ export function App() {
   const [hands, setHands] = useState(() => getHands());
   const [heroCard1, setHeroCard1] = useState('');
   const [heroCard2, setHeroCard2] = useState('');
+  const [numPlayers, setNumPlayers] = useState(8);
+  const [heroPosition, setHeroPosition] = useState('');
   const [cardPickerTargetId, setCardPickerTargetId] = useState(null);
   const [cardPickerRank, setCardPickerRank] = useState(null);
   const applyCardRef = useRef(null);
@@ -80,6 +83,13 @@ export function App() {
         </div>
       </section>
 
+      <PositionSelector
+        numPlayers={numPlayers}
+        setNumPlayers={setNumPlayers}
+        heroPosition={heroPosition}
+        setHeroPosition={setHeroPosition}
+      />
+
       <ImportSection
         onHandsChange={refreshHands}
         heroCard1={heroCard1}
@@ -91,6 +101,7 @@ export function App() {
         onHandsChange={refreshHands}
         heroCard1={heroCard1}
         heroCard2={heroCard2}
+        heroPosition={heroPosition}
       />
 
       <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">

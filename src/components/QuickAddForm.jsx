@@ -1,17 +1,6 @@
 import { useState } from 'react';
 import { generateId, getHands, saveHands } from '../lib/storage.js';
 
-const POSITIONS = [
-  { value: '', label: 'Select position' },
-  { value: 'BTN', label: 'BTN (Button)' },
-  { value: 'SB', label: 'SB (Small Blind)' },
-  { value: 'BB', label: 'BB (Big Blind)' },
-  { value: 'UTG', label: 'UTG' },
-  { value: 'UTG+1', label: 'UTG+1' },
-  { value: 'MP', label: 'MP (Middle)' },
-  { value: 'HJ', label: 'HJ (Hijack)' },
-  { value: 'CO', label: 'CO (Cutoff)' },
-];
 const ACTIONS = [
   { value: '', label: 'What did you do?' },
   { value: 'Fold', label: 'Fold' },
@@ -28,8 +17,7 @@ const OUTCOMES = [
   { value: 'tie', label: 'Tie' },
 ];
 
-export function QuickAddForm({ onHandsChange, heroCard1, heroCard2 }) {
-  const [position, setPosition] = useState('');
+export function QuickAddForm({ onHandsChange, heroCard1, heroCard2, heroPosition }) {
   const [action, setAction] = useState('');
   const [opponentCards, setOpponentCards] = useState('');
   const [outcome, setOutcome] = useState('');
@@ -49,7 +37,7 @@ export function QuickAddForm({ onHandsChange, heroCard1, heroCard2 }) {
       id: generateId(),
       card1: heroCard1.trim(),
       card2: heroCard2.trim(),
-      position: position || undefined,
+      position: heroPosition || undefined,
       action: action || undefined,
       opponentCards: opponentCards.trim() || undefined,
       outcome,
@@ -60,7 +48,6 @@ export function QuickAddForm({ onHandsChange, heroCard1, heroCard2 }) {
     hands.push(hand);
     saveHands(hands);
     onHandsChange();
-    setPosition('');
     setAction('');
     setOpponentCards('');
     setOutcome('');
@@ -83,14 +70,13 @@ export function QuickAddForm({ onHandsChange, heroCard1, heroCard2 }) {
           <p className="text-xs text-slate-400 mt-1">Change your hole cards in “Your hand” at the top.</p>
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-600 mb-1">Position</label>
-          <select value={position} onChange={(e) => setPosition(e.target.value)} className={inputClass}>
-            {POSITIONS.map((opt) => (
-              <option key={opt.value || 'empty'} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+          <label className="block text-sm font-medium text-slate-600 mb-1">Position (from above)</label>
+          <div className="flex items-center gap-2">
+            <span className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 font-medium">
+              {heroPosition || '—'}
+            </span>
+          </div>
+          <p className="text-xs text-slate-400 mt-1">Change your position in the Position section above.</p>
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Action</label>
