@@ -10,7 +10,6 @@ export function CardPicker({
   targetId,
   selectedRank,
   onSelectRank,
-  onSelectSuit,
   applyCardRef,
 }) {
   const handleSuitClick = (suitKey) => {
@@ -22,16 +21,19 @@ export function CardPicker({
     onSelectRank(null);
   };
 
-  let hint = 'Click a card field below first.';
+  let hint = 'Click a hole card field (e.g. My card 1 or My card 2) below, then pick rank → suit here.';
   if (targetId) {
     const label = targetId.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
     hint = selectedRank
-      ? `Filling ${label}: rank ${selectedRank} — now select suit.`
-      : `Filling ${label} — select rank, then suit.`;
+      ? `${label}: rank ${selectedRank} — now click a suit.`
+      : `${label} — click a rank, then a suit.`;
   }
 
   return (
-    <section className="mb-8 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <section
+      className="mb-8 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+      onMouseDown={(e) => e.preventDefault()}
+    >
       <p className="text-sm text-slate-600 mb-3">
         Click any card field below, then select <strong>rank</strong> then <strong>suit</strong> here.
       </p>

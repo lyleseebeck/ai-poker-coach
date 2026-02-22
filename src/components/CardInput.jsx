@@ -1,5 +1,5 @@
 export function CardInput({ id, label, value, onChange, className = '', registerCardPickerTarget }) {
-  const handleFocus = () => {
+  const register = () => {
     if (registerCardPickerTarget) {
       registerCardPickerTarget(id, (card) => onChange(card));
     }
@@ -11,7 +11,8 @@ export function CardInput({ id, label, value, onChange, className = '', register
       id={id}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      onFocus={handleFocus}
+      onFocus={register}
+      onClick={register}
       placeholder="e.g. As"
       maxLength={3}
       className={
