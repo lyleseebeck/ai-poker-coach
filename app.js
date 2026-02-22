@@ -288,16 +288,8 @@ importParseBtn.addEventListener('click', () => {
     importPreviewContent.innerHTML = buildPreviewHtml(parsed);
     importPreviewEl.classList.remove('hidden');
     importHandDetailsEl.classList.remove('hidden');
-    // Reset hand details
-    document.getElementById('import-my-card1').value = '';
-    document.getElementById('import-my-card2').value = '';
-    importNoFlopCheckbox.checked = false;
-    setImportCommunityCardsVisible(true);
-    document.getElementById('import-flop1').value = '';
-    document.getElementById('import-flop2').value = '';
-    document.getElementById('import-flop3').value = '';
-    document.getElementById('import-turn').value = '';
-    document.getElementById('import-river').value = '';
+    // Keep existing hand-details input values; only sync visibility of community cards to checkbox
+    setImportCommunityCardsVisible(!importNoFlopCheckbox.checked);
     importSaveBtn.disabled = false;
   } catch (err) {
     showImportError('Parse error: ' + (err.message || String(err)));
