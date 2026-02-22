@@ -71,13 +71,15 @@ function renderHandList() {
     card.dataset.id = hand.id;
 
     if (hand.actions && hand.actions.length > 0) {
-      // Imported hand: show table, hand ID, pot, and action list
+      // Imported hand: show table, hand ID, pot, my cards, board, and action list
       const tableName = hand.tableName || 'Imported hand';
       const handId = hand.handId ? '#' + hand.handId : '';
       const potStr = hand.potSize != null ? `Pot $${hand.potSize.toFixed(2)}` : '';
       const mePlayer = (hand.players || []).find((p) => p.isMe);
       const myResult = mePlayer && mePlayer.winLoss != null ? (mePlayer.winLoss >= 0 ? '+' : '') + '$' + mePlayer.winLoss.toFixed(2) : '';
       const resultClass = mePlayer && mePlayer.winLoss != null ? (mePlayer.winLoss >= 0 ? 'text-emerald-600' : 'text-red-600') : 'text-slate-500';
+      const myCardsStr = (hand.myCards && hand.myCards.length >= 2) ? escapeHtml(hand.myCards[0]) + ' ' + escapeHtml(hand.myCards[1]) : '';
+      const boardStr = (hand.communityCards && hand.communityCards.length > 0) ? hand.communityCards.map(escapeHtml).join(' ') : (hand.handDidNotReachFlop ? '— (pre-flop)' : '');
       const actionsHtml = hand.actions
         .map(
           (a) =>
@@ -99,6 +101,8 @@ function renderHandList() {
               ${myResult ? `<span class="text-sm font-medium ${resultClass}">${myResult}</span>` : ''}
             </div>
             <p class="text-xs text-slate-500 mt-1">${escapeHtml(hand.start || '')}${hand.end ? ' – ' + escapeHtml(hand.end) : ''}</p>
+            ${myCardsStr ? `<p class="text-xs text-slate-600 mt-1"><span class="text-slate-500">My cards:</span> <span class="font-mono">${myCardsStr}</span></p>` : ''}
+            ${boardStr !== undefined && boardStr !== '' ? `<p class="text-xs text-slate-600 mt-0.5"><span class="text-slate-500">Board:</span> <span class="font-mono">${boardStr}</span></p>` : ''}
           </div>
           <button type="button" class="delete-hand shrink-0 text-slate-400 hover:text-red-600 text-sm" title="Delete">Delete</button>
         </div>
@@ -251,12 +255,25 @@ function buildPreviewHtml(parsed) {
   return lines.join(' · ');
 }
 
+const importHandDetailsEl = document.getElementById('import-hand-details');
+const importNoFlopCheckbox = document.getElementById('import-no-flop');
+const importCommunityCardsWrap = document.getElementById('import-community-cards-wrap');
+
+function setImportCommunityCardsVisible(visible) {
+  importCommunityCardsWrap.classList.toggle('hidden', !visible);
+}
+
+importNoFlopCheckbox.addEventListener('change', () => {
+  setImportCommunityCardsVisible(!importNoFlopCheckbox.checked);
+});
+
 importParseBtn.addEventListener('click', () => {
   const raw = importRawEl.value.trim();
   showImportError('');
   lastParsedHand = null;
   importSaveBtn.disabled = true;
   importPreviewEl.classList.add('hidden');
+  importHandDetailsEl.classList.add('hidden');
   if (!raw) {
     showImportError('Paste hand history text first.');
     return;
@@ -270,6 +287,17 @@ importParseBtn.addEventListener('click', () => {
     lastParsedHand = parsed;
     importPreviewContent.innerHTML = buildPreviewHtml(parsed);
     importPreviewEl.classList.remove('hidden');
+    importHandDetailsEl.classList.remove('hidden');
+    // Reset hand details
+    document.getElementById('import-my-card1').value = '';
+    document.getElementById('import-my-card2').value = '';
+    importNoFlopCheckbox.checked = false;
+    setImportCommunityCardsVisible(true);
+    document.getElementById('import-flop1').value = '';
+    document.getElementById('import-flop2').value = '';
+    document.getElementById('import-flop3').value = '';
+    document.getElementById('import-turn').value = '';
+    document.getElementById('import-river').value = '';
     importSaveBtn.disabled = false;
   } catch (err) {
     showImportError('Parse error: ' + (err.message || String(err)));
@@ -278,6 +306,36 @@ importParseBtn.addEventListener('click', () => {
 
 importSaveBtn.addEventListener('click', () => {
   if (!lastParsedHand) return;
+  const card1 = document.getElementById('import-my-card1').value.trim();
+  const card2 = document.getElementById('import-my-card2').value.trim();
+  const noFlop = importNoFlopCheckbox.checked;
+  const flop1 = document.getElementById('import-flop1').value.trim();
+  const flop2 = document.getElementById('import-flop2').value.trim();
+  const flop3 = document.getElementById('import-flop3').value.trim();
+  const turn = document.getElementById('import-turn').value.trim();
+  const river = document.getElementById('import-river').value.trim();
+
+  showImportError('');
+  if (!card1 || !card2) {
+    showImportError('Please enter both of your hole cards.');
+    return;
+  }
+  if (!noFlop) {
+    if (!flop1 || !flop2 || !flop3) {
+      showImportError('Please enter at least the 3 flop cards, or check "Hand didn\'t reach flop".');
+      return;
+    }
+  }
+
+  const communityCards = [];
+  if (!noFlop) {
+    if (flop1) communityCards.push(flop1);
+    if (flop2) communityCards.push(flop2);
+    if (flop3) communityCards.push(flop3);
+    if (turn) communityCards.push(turn);
+    if (river) communityCards.push(river);
+  }
+
   const hand = {
     id: generateId(),
     source: 'ignition',
@@ -289,7 +347,9 @@ importSaveBtn.addEventListener('click', () => {
     gameType: lastParsedHand.gameType,
     playMode: lastParsedHand.playMode,
     tableName: lastParsedHand.tableName,
-    communityCards: lastParsedHand.communityCards || [],
+    myCards: [card1, card2],
+    communityCards,
+    handDidNotReachFlop: noFlop,
     players: lastParsedHand.players || [],
     actions: lastParsedHand.actions || [],
     createdAt: Date.now(),
@@ -301,6 +361,7 @@ importSaveBtn.addEventListener('click', () => {
   lastParsedHand = null;
   importRawEl.value = '';
   importPreviewEl.classList.add('hidden');
+  importHandDetailsEl.classList.add('hidden');
   importSaveBtn.disabled = true;
   showImportError('');
 });

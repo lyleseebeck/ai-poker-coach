@@ -35,6 +35,39 @@
         <h3 class="text-sm font-medium text-slate-700 mb-2">Preview</h3>
         <div id="import-preview-content" class="text-sm text-slate-600"></div>
       </div>
+      <div id="import-hand-details" class="mt-4 hidden rounded-lg border border-slate-200 border-amber-200 bg-amber-50/50 p-4">
+        <h3 class="text-sm font-medium text-slate-700 mb-3">Hand details <span class="text-amber-600">(required to save)</span></h3>
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-slate-600 mb-1">My cards</label>
+            <div class="flex gap-2">
+              <input type="text" id="import-my-card1" placeholder="e.g. As" maxlength="3"
+                class="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none">
+              <input type="text" id="import-my-card2" placeholder="e.g. Kh" maxlength="3"
+                class="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none">
+            </div>
+            <p class="text-xs text-slate-400 mt-1">Rank + suit: 2–9, T, J, Q, K, A + c, d, h, s</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="checkbox" id="import-no-flop" class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">
+            <label for="import-no-flop" class="text-sm text-slate-700">Hand didn't reach flop</label>
+          </div>
+          <div id="import-community-cards-wrap" class="space-y-2">
+            <label class="block text-sm font-medium text-slate-600">Community cards</label>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-xs text-slate-500">Flop</span>
+              <input type="text" id="import-flop1" placeholder="1" maxlength="3" class="w-14 rounded border border-slate-300 px-2 py-1.5 text-sm">
+              <input type="text" id="import-flop2" placeholder="2" maxlength="3" class="w-14 rounded border border-slate-300 px-2 py-1.5 text-sm">
+              <input type="text" id="import-flop3" placeholder="3" maxlength="3" class="w-14 rounded border border-slate-300 px-2 py-1.5 text-sm">
+              <span class="text-xs text-slate-500 ml-1">Turn</span>
+              <input type="text" id="import-turn" placeholder="4" maxlength="3" class="w-14 rounded border border-slate-300 px-2 py-1.5 text-sm">
+              <span class="text-xs text-slate-500">River</span>
+              <input type="text" id="import-river" placeholder="5" maxlength="3" class="w-14 rounded border border-slate-300 px-2 py-1.5 text-sm">
+            </div>
+            <p class="text-xs text-slate-400">Required: at least the 3 flop cards if the hand saw the flop.</p>
+          </div>
+        </div>
+      </div>
       <div id="import-error" class="mt-3 text-sm text-red-600 hidden"></div>
     </section>
 
