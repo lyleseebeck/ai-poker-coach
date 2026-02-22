@@ -1,4 +1,5 @@
 import { CardInput } from './CardInput.jsx';
+import { CardLogo } from './CardLogo.jsx';
 
 export function HandDetailsForm({
   heroCard1,
@@ -25,9 +26,9 @@ export function HandDetailsForm({
       <div className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Your hand (from above)</label>
-          <div className="flex items-center gap-2 font-mono text-slate-800">
-            <span className="px-3 py-1.5 rounded bg-slate-100">{heroCard1 || '—'}</span>
-            <span className="px-3 py-1.5 rounded bg-slate-100">{heroCard2 || '—'}</span>
+          <div className="flex items-center gap-2">
+            <CardLogo value={heroCard1} />
+            <CardLogo value={heroCard2} />
           </div>
           <p className="text-xs text-slate-400 mt-1">Change your hole cards in “Your hand” at the top.</p>
         </div>

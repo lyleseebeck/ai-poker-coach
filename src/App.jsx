@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { getHands } from './lib/storage.js';
 import { CardPicker } from './components/CardPicker.jsx';
-import { CardInput } from './components/CardInput.jsx';
+import { CardLogo } from './components/CardLogo.jsx';
 import { PositionSelector } from './components/PositionSelector.jsx';
 import { ImportSection } from './components/ImportSection.jsx';
 import { QuickAddForm } from './components/QuickAddForm.jsx';
@@ -62,24 +62,26 @@ export function App() {
 
       <section className="mb-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-medium text-slate-700 mb-2">Your hand (hero)</h2>
-        <p className="text-slate-500 text-sm mb-3">Select your two hole cards first — they’ll be used for both import and quick add below.</p>
-        <div className="flex gap-2">
-          <CardInput
-            id="hero-card1"
-            label="Card 1"
-            value={heroCard1}
-            onChange={setHeroCard1}
-            className="flex-1"
-            registerCardPickerTarget={registerCardPickerTarget}
-          />
-          <CardInput
-            id="hero-card2"
-            label="Card 2"
-            value={heroCard2}
-            onChange={setHeroCard2}
-            className="flex-1"
-            registerCardPickerTarget={registerCardPickerTarget}
-          />
+        <p className="text-slate-500 text-sm mb-3">Click a card then use the picker above, or pick rank/suit to fill the first empty slot.</p>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => registerCardPickerTarget('hero-card1', setHeroCard1)}
+            className="flex flex-col items-center gap-1 rounded-lg border-2 border-transparent p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
+            aria-label="Select card 1"
+          >
+            <CardLogo value={heroCard1} />
+            <span className="text-xs text-slate-400">Card 1</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => registerCardPickerTarget('hero-card2', setHeroCard2)}
+            className="flex flex-col items-center gap-1 rounded-lg border-2 border-transparent p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
+            aria-label="Select card 2"
+          >
+            <CardLogo value={heroCard2} />
+            <span className="text-xs text-slate-400">Card 2</span>
+          </button>
         </div>
       </section>
 
