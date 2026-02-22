@@ -15,6 +15,37 @@
       <p class="text-slate-500 text-sm mt-1">Log hands and review them later. Data stays in your browser.</p>
     </header>
 
+    <!-- Card picker: click a card field below, then pick rank then suit -->
+    <section class="mb-8 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-sm text-slate-600 mb-3">Click any card field below, then select <strong>rank</strong> then <strong>suit</strong> here.</p>
+      <div class="flex flex-wrap items-center gap-3">
+        <span class="text-xs font-medium text-slate-500 uppercase tracking-wide">Rank</span>
+        <div id="card-picker-ranks" class="flex flex-wrap gap-1.5">
+          <button type="button" class="card-picker-rank w-9 h-9 rounded-lg border border-slate-300 bg-white text-slate-700 font-medium text-sm hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" data-rank="2">2</button>
+          <button type="button" class="card-picker-rank w-9 h-9 rounded-lg border border-slate-300 bg-white text-slate-700 font-medium text-sm hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" data-rank="3">3</button>
+          <button type="button" class="card-picker-rank w-9 h-9 rounded-lg border border-slate-300 bg-white text-slate-700 font-medium text-sm hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" data-rank="4">4</button>
+          <button type="button" class="card-picker-rank w-9 h-9 rounded-lg border border-slate-300 bg-white text-slate-700 font-medium text-sm hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" data-rank="5">5</button>
+          <button type="button" class="card-picker-rank w-9 h-9 rounded-lg border border-slate-300 bg-white text-slate-700 font-medium text-sm hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" data-rank="6">6</button>
+          <button type="button" class="card-picker-rank w-9 h-9 rounded-lg border border-slate-300 bg-white text-slate-700 font-medium text-sm hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" data-rank="7">7</button>
+          <button type="button" class="card-picker-rank w-9 h-9 rounded-lg border border-slate-300 bg-white text-slate-700 font-medium text-sm hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" data-rank="8">8</button>
+          <button type="button" class="card-picker-rank w-9 h-9 rounded-lg border border-slate-300 bg-white text-slate-700 font-medium text-sm hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" data-rank="9">9</button>
+          <button type="button" class="card-picker-rank w-9 h-9 rounded-lg border border-slate-300 bg-white text-slate-700 font-medium text-sm hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" data-rank="T">T</button>
+          <button type="button" class="card-picker-rank w-9 h-9 rounded-lg border border-slate-300 bg-white text-slate-700 font-medium text-sm hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" data-rank="J">J</button>
+          <button type="button" class="card-picker-rank w-9 h-9 rounded-lg border border-slate-300 bg-white text-slate-700 font-medium text-sm hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" data-rank="Q">Q</button>
+          <button type="button" class="card-picker-rank w-9 h-9 rounded-lg border border-slate-300 bg-white text-slate-700 font-medium text-sm hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" data-rank="K">K</button>
+          <button type="button" class="card-picker-rank w-9 h-9 rounded-lg border border-slate-300 bg-white text-slate-700 font-medium text-sm hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" data-rank="A">A</button>
+        </div>
+        <span class="text-xs font-medium text-slate-500 uppercase tracking-wide ml-2">Suit</span>
+        <div id="card-picker-suits" class="flex gap-1.5">
+          <button type="button" class="card-picker-suit w-10 h-9 rounded-lg border border-slate-300 bg-white text-xl hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" data-suit="c" title="Clubs">♣</button>
+          <button type="button" class="card-picker-suit w-10 h-9 rounded-lg border border-slate-300 bg-white text-xl hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 text-red-600" data-suit="d" title="Diamonds">♦</button>
+          <button type="button" class="card-picker-suit w-10 h-9 rounded-lg border border-slate-300 bg-white text-xl hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 text-red-600" data-suit="h" title="Hearts">♥</button>
+          <button type="button" class="card-picker-suit w-10 h-9 rounded-lg border border-slate-300 bg-white text-xl hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" data-suit="s" title="Spades">♠</button>
+        </div>
+      </div>
+      <p id="card-picker-hint" class="text-xs text-slate-400 mt-2"></p>
+    </section>
+
     <!-- Import hand history (Ignition paste) -->
     <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-8">
       <h2 class="text-lg font-medium text-slate-700 mb-4">Import hand history</h2>
@@ -42,11 +73,11 @@
             <label class="block text-sm font-medium text-slate-600 mb-1">My cards</label>
             <div class="flex gap-2">
               <input type="text" id="import-my-card1" placeholder="e.g. As" maxlength="3"
-                class="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none">
+                class="card-input flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none" data-card-label="My card 1">
               <input type="text" id="import-my-card2" placeholder="e.g. Kh" maxlength="3"
-                class="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none">
+                class="card-input flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none" data-card-label="My card 2">
             </div>
-            <p class="text-xs text-slate-400 mt-1">Rank + suit: 2–9, T, J, Q, K, A + c, d, h, s</p>
+            <p class="text-xs text-slate-400 mt-1">Click a field, then use the card picker above.</p>
           </div>
           <div class="flex items-center gap-2">
             <input type="checkbox" id="import-no-flop" class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">
@@ -56,13 +87,13 @@
             <label class="block text-sm font-medium text-slate-600">Community cards</label>
             <div class="flex flex-wrap items-center gap-2">
               <span class="text-xs text-slate-500">Flop</span>
-              <input type="text" id="import-flop1" placeholder="1" maxlength="3" class="w-14 rounded border border-slate-300 px-2 py-1.5 text-sm">
-              <input type="text" id="import-flop2" placeholder="2" maxlength="3" class="w-14 rounded border border-slate-300 px-2 py-1.5 text-sm">
-              <input type="text" id="import-flop3" placeholder="3" maxlength="3" class="w-14 rounded border border-slate-300 px-2 py-1.5 text-sm">
+              <input type="text" id="import-flop1" placeholder="1" maxlength="3" class="card-input w-14 rounded border border-slate-300 px-2 py-1.5 text-sm" data-card-label="Flop 1">
+              <input type="text" id="import-flop2" placeholder="2" maxlength="3" class="card-input w-14 rounded border border-slate-300 px-2 py-1.5 text-sm" data-card-label="Flop 2">
+              <input type="text" id="import-flop3" placeholder="3" maxlength="3" class="card-input w-14 rounded border border-slate-300 px-2 py-1.5 text-sm" data-card-label="Flop 3">
               <span class="text-xs text-slate-500 ml-1">Turn</span>
-              <input type="text" id="import-turn" placeholder="4" maxlength="3" class="w-14 rounded border border-slate-300 px-2 py-1.5 text-sm">
+              <input type="text" id="import-turn" placeholder="4" maxlength="3" class="card-input w-14 rounded border border-slate-300 px-2 py-1.5 text-sm" data-card-label="Turn">
               <span class="text-xs text-slate-500">River</span>
-              <input type="text" id="import-river" placeholder="5" maxlength="3" class="w-14 rounded border border-slate-300 px-2 py-1.5 text-sm">
+              <input type="text" id="import-river" placeholder="5" maxlength="3" class="card-input w-14 rounded border border-slate-300 px-2 py-1.5 text-sm" data-card-label="River">
             </div>
             <p class="text-xs text-slate-400">Required: at least the 3 flop cards if the hand saw the flop.</p>
           </div>
@@ -79,13 +110,13 @@
           <label for="card1" class="block text-sm font-medium text-slate-600 mb-1">My cards</label>
           <div class="flex gap-2">
             <input type="text" id="card1" name="card1" placeholder="e.g. As"
-              class="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-              maxlength="3">
+              class="card-input flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+              maxlength="3" data-card-label="My card 1">
             <input type="text" id="card2" name="card2" placeholder="e.g. Kh"
-              class="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-              maxlength="3">
+              class="card-input flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+              maxlength="3" data-card-label="My card 2">
           </div>
-          <p class="text-xs text-slate-400 mt-1">Use format: rank + suit (2–9, T, J, Q, K, A) + (c, d, h, s)</p>
+          <p class="text-xs text-slate-400 mt-1">Click a field, then use the card picker above.</p>
         </div>
 
         <div>

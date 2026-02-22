@@ -183,6 +183,59 @@ function generateId() {
   return 'id-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9);
 }
 
+// --- CARD PICKER: point-and-click rank then suit ---
+let cardPickerTarget = null;
+let cardPickerRank = null;
+const RANK_BTN_CLASS = 'ring-2 ring-emerald-500 ring-offset-1 bg-emerald-50';
+
+document.querySelectorAll('.card-input').forEach((el) => {
+  el.addEventListener('focus', () => {
+    cardPickerTarget = el;
+    cardPickerRank = null;
+    document.querySelectorAll('.card-picker-rank').forEach((b) => b.classList.remove(RANK_BTN_CLASS));
+    updateCardPickerHint();
+  });
+});
+
+function updateCardPickerHint() {
+  const hint = document.getElementById('card-picker-hint');
+  if (!hint) return;
+  if (!cardPickerTarget) {
+    hint.textContent = 'Click a card field below first.';
+    return;
+  }
+  const label = cardPickerTarget.dataset.cardLabel || 'Card';
+  if (cardPickerRank) {
+    hint.textContent = `Filling ${label}: rank ${cardPickerRank} — now select suit.`;
+  } else {
+    hint.textContent = `Filling ${label} — select rank, then suit.`;
+  }
+}
+
+document.querySelectorAll('.card-picker-rank').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    cardPickerRank = btn.dataset.rank;
+    document.querySelectorAll('.card-picker-rank').forEach((b) => b.classList.remove(RANK_BTN_CLASS));
+    btn.classList.add(RANK_BTN_CLASS);
+    updateCardPickerHint();
+  });
+});
+
+document.querySelectorAll('.card-picker-suit').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    if (!cardPickerRank) return;
+    const suit = btn.dataset.suit;
+    const card = cardPickerRank + suit;
+    if (cardPickerTarget) {
+      cardPickerTarget.value = card;
+      cardPickerTarget.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    cardPickerRank = null;
+    document.querySelectorAll('.card-picker-rank').forEach((b) => b.classList.remove(RANK_BTN_CLASS));
+    updateCardPickerHint();
+  });
+});
+
 // --- HANDLE FORM SUBMIT ---
 // When you click "Save hand", we read the form, build a hand object,
 // add it to the list, save to localStorage, re-render, and clear the form.
@@ -360,3 +413,4 @@ importSaveBtn.addEventListener('click', () => {
 
 // --- ON PAGE LOAD ---
 renderHandList();
+updateCardPickerHint();
