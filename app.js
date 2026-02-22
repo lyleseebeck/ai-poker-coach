@@ -14,8 +14,10 @@
  */
 
 // --- STORAGE KEY ---
-// We use this single key in localStorage to store our array of hands.
 const STORAGE_KEY = 'pokerHands';
+
+// --- PARSED IMPORT (held until user clicks Save) ---
+let lastParsedHand = null;
 
 // --- GET ALL HANDS FROM STORAGE ---
 // Returns an array of hand objects. If nothing is saved yet, returns [].
@@ -65,33 +67,91 @@ function renderHandList() {
   sorted.forEach((hand) => {
     const card = document.createElement('div');
     card.className =
-      'flex items-start justify-between gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50/50';
+      'rounded-lg border border-slate-200 bg-slate-50/50 overflow-hidden';
     card.dataset.id = hand.id;
 
-    const rankLabel = { win: 'Won', loss: 'Lost', tie: 'Tie' }[hand.outcome] || hand.outcome;
-    const outcomeClass =
-      hand.outcome === 'win'
-        ? 'text-emerald-600'
-        : hand.outcome === 'loss'
-          ? 'text-red-600'
-          : 'text-slate-500';
-
-    card.innerHTML = `
-      <div class="min-w-0 flex-1">
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="font-mono font-medium text-slate-800">${escapeHtml(hand.card1 || '')} ${escapeHtml(hand.card2 || '')}</span>
-          <span class="text-slate-400">·</span>
-          <span class="text-slate-600 text-sm">${escapeHtml(hand.position || '—')}</span>
-          <span class="text-slate-400">·</span>
-          <span class="text-slate-600 text-sm">${escapeHtml(hand.action || '—')}</span>
-          <span class="text-slate-400">·</span>
-          <span class="text-sm font-medium ${outcomeClass}">${escapeHtml(rankLabel)}</span>
+    if (hand.actions && hand.actions.length > 0) {
+      // Imported hand: show table, hand ID, pot, and action list
+      const tableName = hand.tableName || 'Imported hand';
+      const handId = hand.handId ? '#' + hand.handId : '';
+      const potStr = hand.potSize != null ? `Pot $${hand.potSize.toFixed(2)}` : '';
+      const mePlayer = (hand.players || []).find((p) => p.isMe);
+      const myResult = mePlayer && mePlayer.winLoss != null ? (mePlayer.winLoss >= 0 ? '+' : '') + '$' + mePlayer.winLoss.toFixed(2) : '';
+      const resultClass = mePlayer && mePlayer.winLoss != null ? (mePlayer.winLoss >= 0 ? 'text-emerald-600' : 'text-red-600') : 'text-slate-500';
+      const actionsHtml = hand.actions
+        .map(
+          (a) =>
+            `<tr class="border-b border-slate-100 last:border-0">
+              <td class="py-1 pr-2 text-slate-600">${escapeHtml(a.position)}</td>
+              <td class="py-1 pr-2">${escapeHtml(a.action)}</td>
+              <td class="py-1 pr-2 text-slate-500 text-xs">${escapeHtml(a.timestamp || '')}</td>
+              <td class="py-1 text-slate-600">${a.amount != null ? '$' + a.amount.toFixed(2) : ''}</td>
+            </tr>`
+        )
+        .join('');
+      card.innerHTML = `
+        <div class="p-3 flex items-start justify-between gap-3">
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="font-medium text-slate-800">${escapeHtml(tableName)}</span>
+              ${handId ? `<span class="text-slate-400 text-sm">${escapeHtml(handId)}</span>` : ''}
+              ${potStr ? `<span class="text-slate-500 text-sm">${potStr}</span>` : ''}
+              ${myResult ? `<span class="text-sm font-medium ${resultClass}">${myResult}</span>` : ''}
+            </div>
+            <p class="text-xs text-slate-500 mt-1">${escapeHtml(hand.start || '')}${hand.end ? ' – ' + escapeHtml(hand.end) : ''}</p>
+          </div>
+          <button type="button" class="delete-hand shrink-0 text-slate-400 hover:text-red-600 text-sm" title="Delete">Delete</button>
         </div>
-        ${hand.opponentCards ? `<p class="text-xs text-slate-500 mt-1">Villain: ${escapeHtml(hand.opponentCards)}</p>` : ''}
-        ${hand.notes ? `<p class="text-xs text-slate-500 mt-1">${escapeHtml(hand.notes)}</p>` : ''}
-      </div>
-      <button type="button" class="delete-hand shrink-0 text-slate-400 hover:text-red-600 text-sm" title="Delete">Delete</button>
-    `;
+        <div class="border-t border-slate-200 bg-white/60">
+          <details class="group">
+            <summary class="px-3 py-2 text-sm text-slate-600 cursor-pointer list-none flex items-center gap-1">
+              <span class="group-open:rotate-90 transition-transform">▶</span>
+              <span>${hand.actions.length} actions</span>
+            </summary>
+            <div class="px-3 pb-3 overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="text-left text-slate-500 border-b border-slate-200">
+                    <th class="py-1 pr-2 font-medium">Position</th>
+                    <th class="py-1 pr-2 font-medium">Action</th>
+                    <th class="py-1 pr-2 font-medium">Time</th>
+                    <th class="py-1 font-medium">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>${actionsHtml}</tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+      `;
+    } else {
+      // Simple hand (manual entry)
+      const rankLabel = { win: 'Won', loss: 'Lost', tie: 'Tie' }[hand.outcome] || hand.outcome;
+      const outcomeClass =
+        hand.outcome === 'win'
+          ? 'text-emerald-600'
+          : hand.outcome === 'loss'
+            ? 'text-red-600'
+            : 'text-slate-500';
+      card.innerHTML = `
+        <div class="flex items-start justify-between gap-3 p-3">
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="font-mono font-medium text-slate-800">${escapeHtml(hand.card1 || '')} ${escapeHtml(hand.card2 || '')}</span>
+              <span class="text-slate-400">·</span>
+              <span class="text-slate-600 text-sm">${escapeHtml(hand.position || '—')}</span>
+              <span class="text-slate-400">·</span>
+              <span class="text-slate-600 text-sm">${escapeHtml(hand.action || '—')}</span>
+              <span class="text-slate-400">·</span>
+              <span class="text-sm font-medium ${outcomeClass}">${escapeHtml(rankLabel)}</span>
+            </div>
+            ${hand.opponentCards ? `<p class="text-xs text-slate-500 mt-1">Villain: ${escapeHtml(hand.opponentCards)}</p>` : ''}
+            ${hand.notes ? `<p class="text-xs text-slate-500 mt-1">${escapeHtml(hand.notes)}</p>` : ''}
+          </div>
+          <button type="button" class="delete-hand shrink-0 text-slate-400 hover:text-red-600 text-sm" title="Delete">Delete</button>
+        </div>
+      `;
+    }
 
     card.querySelector('.delete-hand').addEventListener('click', () => deleteHand(hand.id));
     listEl.appendChild(card);
@@ -163,6 +223,87 @@ document.getElementById('hand-form').addEventListener('submit', (e) => {
   document.getElementById('hand-form').reset();
 });
 
+// --- IMPORT HAND HISTORY (Ignition) ---
+const importRawEl = document.getElementById('import-raw');
+const importParseBtn = document.getElementById('import-parse-btn');
+const importSaveBtn = document.getElementById('import-save-btn');
+const importPreviewEl = document.getElementById('import-preview');
+const importPreviewContent = document.getElementById('import-preview-content');
+const importErrorEl = document.getElementById('import-error');
+
+function showImportError(msg) {
+  importErrorEl.textContent = msg || '';
+  importErrorEl.classList.toggle('hidden', !msg);
+}
+
+function buildPreviewHtml(parsed) {
+  const lines = [];
+  if (parsed.tableName) lines.push(`<strong>Table:</strong> ${escapeHtml(parsed.tableName)}`);
+  if (parsed.handId) lines.push(`<strong>Hand:</strong> #${escapeHtml(parsed.handId)}`);
+  if (parsed.potSize != null) lines.push(`<strong>Pot:</strong> $${parsed.potSize.toFixed(2)}`);
+  if (parsed.start) lines.push(`<strong>Start:</strong> ${escapeHtml(parsed.start)}`);
+  lines.push(`<strong>Actions:</strong> ${parsed.actions.length} recorded`);
+  const me = (parsed.players || []).find((p) => p.isMe);
+  if (me && me.winLoss != null) {
+    const wl = me.winLoss >= 0 ? '+' : '';
+    lines.push(`<strong>Your result:</strong> <span class="${me.winLoss >= 0 ? 'text-emerald-600' : 'text-red-600'}">${wl}$${me.winLoss.toFixed(2)}</span>`);
+  }
+  return lines.join(' · ');
+}
+
+importParseBtn.addEventListener('click', () => {
+  const raw = importRawEl.value.trim();
+  showImportError('');
+  lastParsedHand = null;
+  importSaveBtn.disabled = true;
+  importPreviewEl.classList.add('hidden');
+  if (!raw) {
+    showImportError('Paste hand history text first.');
+    return;
+  }
+  try {
+    const parsed = parseIgnitionHandHistory(raw);
+    if (!parsed.actions || parsed.actions.length === 0) {
+      showImportError('Could not find any actions. Make sure you pasted the full Ignition hand (including "Hand Session" and the action table).');
+      return;
+    }
+    lastParsedHand = parsed;
+    importPreviewContent.innerHTML = buildPreviewHtml(parsed);
+    importPreviewEl.classList.remove('hidden');
+    importSaveBtn.disabled = false;
+  } catch (err) {
+    showImportError('Parse error: ' + (err.message || String(err)));
+  }
+});
+
+importSaveBtn.addEventListener('click', () => {
+  if (!lastParsedHand) return;
+  const hand = {
+    id: generateId(),
+    source: 'ignition',
+    handId: lastParsedHand.handId,
+    start: lastParsedHand.start,
+    end: lastParsedHand.end,
+    potSize: lastParsedHand.potSize,
+    rake: lastParsedHand.rake,
+    gameType: lastParsedHand.gameType,
+    playMode: lastParsedHand.playMode,
+    tableName: lastParsedHand.tableName,
+    communityCards: lastParsedHand.communityCards || [],
+    players: lastParsedHand.players || [],
+    actions: lastParsedHand.actions || [],
+    createdAt: Date.now(),
+  };
+  const hands = getHands();
+  hands.push(hand);
+  saveHands(hands);
+  renderHandList();
+  lastParsedHand = null;
+  importRawEl.value = '';
+  importPreviewEl.classList.add('hidden');
+  importSaveBtn.disabled = true;
+  showImportError('');
+});
+
 // --- ON PAGE LOAD ---
-// When the page first opens, we load and display any saved hands.
 renderHandList();
