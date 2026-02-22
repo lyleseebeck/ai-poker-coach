@@ -10,19 +10,19 @@ export function CardPicker({
   targetId,
   selectedRank,
   onSelectRank,
-  applyCardRef,
+  onApplyCard,
 }) {
   const handleSuitClick = (suitKey) => {
     if (!selectedRank) return;
     const card = selectedRank + suitKey;
-    if (applyCardRef?.current) {
-      applyCardRef.current(card);
-    }
+    onApplyCard?.(card);
     onSelectRank(null);
   };
 
-  let hint = 'Click a hole card field (e.g. My card 1 or My card 2) below, then pick rank → suit here.';
-  if (targetId) {
+  let hint;
+  if (!targetId) {
+    hint = 'Both hole cards are set. Click a card field below to change one, or add/import a hand.';
+  } else {
     const label = targetId.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
     hint = selectedRank
       ? `${label}: rank ${selectedRank} — now click a suit.`
@@ -35,7 +35,7 @@ export function CardPicker({
       onMouseDown={(e) => e.preventDefault()}
     >
       <p className="text-sm text-slate-600 mb-3">
-        Click any card field below, then select <strong>rank</strong> then <strong>suit</strong> here.
+        Select <strong>rank</strong> then <strong>suit</strong> — fills your first empty hole card. Or click a card field below to choose which slot.
       </p>
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Rank</span>

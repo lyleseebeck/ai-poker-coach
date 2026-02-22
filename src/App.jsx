@@ -24,6 +24,25 @@ export function App() {
     applyCardRef.current = setValue;
   }, []);
 
+  const firstEmptyHeroSlot =
+    !heroCard1.trim() ? 'hero-card1' : !heroCard2.trim() ? 'hero-card2' : null;
+  const effectiveTargetId = cardPickerTargetId || firstEmptyHeroSlot;
+
+  const onApplyCard = useCallback(
+    (card) => {
+      if (applyCardRef.current) {
+        applyCardRef.current(card);
+        applyCardRef.current = null;
+        setCardPickerTargetId(null);
+      } else if (!heroCard1.trim()) {
+        setHeroCard1(card);
+      } else if (!heroCard2.trim()) {
+        setHeroCard2(card);
+      }
+    },
+    [heroCard1, heroCard2]
+  );
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       <header className="mb-8">
@@ -34,10 +53,10 @@ export function App() {
       </header>
 
       <CardPicker
-        targetId={cardPickerTargetId}
+        targetId={effectiveTargetId}
         selectedRank={cardPickerRank}
         onSelectRank={setCardPickerRank}
-        applyCardRef={applyCardRef}
+        onApplyCard={onApplyCard}
       />
 
       <section className="mb-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
