@@ -1,10 +1,8 @@
 import { CardInput } from './CardInput.jsx';
 
 export function HandDetailsForm({
-  myCard1,
-  setMyCard1,
-  myCard2,
-  setMyCard2,
+  heroCard1,
+  heroCard2,
   noFlop,
   setNoFlop,
   flop1,
@@ -26,26 +24,12 @@ export function HandDetailsForm({
       </h3>
       <div className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-slate-600 mb-1">My cards</label>
-          <div className="flex gap-2">
-            <CardInput
-              id="import-my-card1"
-              label="My card 1"
-              value={myCard1}
-              onChange={setMyCard1}
-              className="flex-1"
-              registerCardPickerTarget={registerCardPickerTarget}
-            />
-            <CardInput
-              id="import-my-card2"
-              label="My card 2"
-              value={myCard2}
-              onChange={setMyCard2}
-              className="flex-1"
-              registerCardPickerTarget={registerCardPickerTarget}
-            />
+          <label className="block text-sm font-medium text-slate-600 mb-1">Your hand (from above)</label>
+          <div className="flex items-center gap-2 font-mono text-slate-800">
+            <span className="px-3 py-1.5 rounded bg-slate-100">{heroCard1 || '—'}</span>
+            <span className="px-3 py-1.5 rounded bg-slate-100">{heroCard2 || '—'}</span>
           </div>
-          <p className="text-xs text-slate-400 mt-1">Click a field, then use the card picker above.</p>
+          <p className="text-xs text-slate-400 mt-1">Change your hole cards in “Your hand” at the top.</p>
         </div>
         <div className="flex items-center gap-2">
           <input

@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { CardInput } from './CardInput.jsx';
 import { generateId, getHands, saveHands } from '../lib/storage.js';
 
 const POSITIONS = [
@@ -29,9 +28,7 @@ const OUTCOMES = [
   { value: 'tie', label: 'Tie' },
 ];
 
-export function QuickAddForm({ onHandsChange, registerCardPickerTarget }) {
-  const [card1, setCard1] = useState('');
-  const [card2, setCard2] = useState('');
+export function QuickAddForm({ onHandsChange, heroCard1, heroCard2 }) {
   const [position, setPosition] = useState('');
   const [action, setAction] = useState('');
   const [opponentCards, setOpponentCards] = useState('');
@@ -40,8 +37,8 @@ export function QuickAddForm({ onHandsChange, registerCardPickerTarget }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!card1.trim() || !card2.trim()) {
-      alert('Please enter both of your cards.');
+    if (!heroCard1.trim() || !heroCard2.trim()) {
+      alert('Select your two hole cards in "Your hand" at the top first.');
       return;
     }
     if (!outcome) {
@@ -50,8 +47,8 @@ export function QuickAddForm({ onHandsChange, registerCardPickerTarget }) {
     }
     const hand = {
       id: generateId(),
-      card1: card1.trim(),
-      card2: card2.trim(),
+      card1: heroCard1.trim(),
+      card2: heroCard2.trim(),
       position: position || undefined,
       action: action || undefined,
       opponentCards: opponentCards.trim() || undefined,
@@ -63,8 +60,6 @@ export function QuickAddForm({ onHandsChange, registerCardPickerTarget }) {
     hands.push(hand);
     saveHands(hands);
     onHandsChange();
-    setCard1('');
-    setCard2('');
     setPosition('');
     setAction('');
     setOpponentCards('');
@@ -80,26 +75,12 @@ export function QuickAddForm({ onHandsChange, registerCardPickerTarget }) {
       <h2 className="text-lg font-medium text-slate-700 mb-4">Add a hand (quick)</h2>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-slate-600 mb-1">My cards</label>
-          <div className="flex gap-2">
-            <CardInput
-              id="quick-card1"
-              label="My card 1"
-              value={card1}
-              onChange={setCard1}
-              className="flex-1"
-              registerCardPickerTarget={registerCardPickerTarget}
-            />
-            <CardInput
-              id="quick-card2"
-              label="My card 2"
-              value={card2}
-              onChange={setCard2}
-              className="flex-1"
-              registerCardPickerTarget={registerCardPickerTarget}
-            />
+          <label className="block text-sm font-medium text-slate-600 mb-1">Your hand (from above)</label>
+          <div className="flex items-center gap-2 font-mono text-slate-800">
+            <span className="px-3 py-1.5 rounded bg-slate-100">{heroCard1 || '—'}</span>
+            <span className="px-3 py-1.5 rounded bg-slate-100">{heroCard2 || '—'}</span>
           </div>
-          <p className="text-xs text-slate-400 mt-1">Click a field, then use the card picker above.</p>
+          <p className="text-xs text-slate-400 mt-1">Change your hole cards in “Your hand” at the top.</p>
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Position</label>

@@ -3,12 +3,10 @@ import { parseIgnitionHandHistory } from '../lib/ignitionParser.js';
 import { generateId, getHands, saveHands } from '../lib/storage.js';
 import { HandDetailsForm } from './HandDetailsForm.jsx';
 
-export function ImportSection({ onHandsChange, registerCardPickerTarget, setCardPickerTargetId }) {
+export function ImportSection({ onHandsChange, heroCard1, heroCard2, registerCardPickerTarget }) {
   const [rawText, setRawText] = useState('');
   const [parsedHand, setParsedHand] = useState(null);
   const [importError, setImportError] = useState('');
-  const [myCard1, setMyCard1] = useState('');
-  const [myCard2, setMyCard2] = useState('');
   const [noFlop, setNoFlop] = useState(false);
   const [flop1, setFlop1] = useState('');
   const [flop2, setFlop2] = useState('');
@@ -41,8 +39,8 @@ export function ImportSection({ onHandsChange, registerCardPickerTarget, setCard
   const handleSave = () => {
     if (!parsedHand) return;
     setImportError('');
-    if (!myCard1.trim() || !myCard2.trim()) {
-      setImportError('Please enter both of your hole cards.');
+    if (!heroCard1.trim() || !heroCard2.trim()) {
+      setImportError('Select your two hole cards in "Your hand" above first.');
       return;
     }
     if (!noFlop && (!flop1.trim() || !flop2.trim() || !flop3.trim())) {
@@ -68,7 +66,7 @@ export function ImportSection({ onHandsChange, registerCardPickerTarget, setCard
       gameType: parsedHand.gameType,
       playMode: parsedHand.playMode,
       tableName: parsedHand.tableName,
-      myCards: [myCard1.trim(), myCard2.trim()],
+      myCards: [heroCard1.trim(), heroCard2.trim()],
       communityCards,
       handDidNotReachFlop: noFlop,
       players: parsedHand.players || [],
@@ -138,10 +136,8 @@ export function ImportSection({ onHandsChange, registerCardPickerTarget, setCard
             </div>
           </div>
           <HandDetailsForm
-            myCard1={myCard1}
-            setMyCard1={setMyCard1}
-            myCard2={myCard2}
-            setMyCard2={setMyCard2}
+            heroCard1={heroCard1}
+            heroCard2={heroCard2}
             noFlop={noFlop}
             setNoFlop={setNoFlop}
             flop1={flop1}
