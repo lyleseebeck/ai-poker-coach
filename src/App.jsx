@@ -32,8 +32,6 @@ export function App() {
     (card) => {
       if (applyCardRef.current) {
         applyCardRef.current(card);
-        applyCardRef.current = null;
-        setCardPickerTargetId(null);
       } else if (!heroCard1.trim()) {
         setHeroCard1(card);
       } else if (!heroCard2.trim()) {
