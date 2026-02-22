@@ -1,18 +1,17 @@
 /**
  * Positions by table size (number of players).
- * Order: BTN, SB, BB, then UTG and onward to CO.
+ * Ring order: SB, BB, UTG, ... through CO, finishing with BTN.
  */
 export const POSITIONS_BY_PLAYERS = {
   6: [
-    { value: 'BTN', label: 'BTN' },
     { value: 'SB', label: 'SB' },
     { value: 'BB', label: 'BB' },
     { value: 'UTG', label: 'UTG' },
     { value: 'MP', label: 'MP' },
     { value: 'CO', label: 'CO' },
+    { value: 'BTN', label: 'BTN' },
   ],
   8: [
-    { value: 'BTN', label: 'BTN' },
     { value: 'SB', label: 'SB' },
     { value: 'BB', label: 'BB' },
     { value: 'UTG', label: 'UTG' },
@@ -20,9 +19,9 @@ export const POSITIONS_BY_PLAYERS = {
     { value: 'MP', label: 'MP' },
     { value: 'HJ', label: 'HJ' },
     { value: 'CO', label: 'CO' },
+    { value: 'BTN', label: 'BTN' },
   ],
   9: [
-    { value: 'BTN', label: 'BTN' },
     { value: 'SB', label: 'SB' },
     { value: 'BB', label: 'BB' },
     { value: 'UTG', label: 'UTG' },
@@ -31,6 +30,7 @@ export const POSITIONS_BY_PLAYERS = {
     { value: 'MP', label: 'MP' },
     { value: 'HJ', label: 'HJ' },
     { value: 'CO', label: 'CO' },
+    { value: 'BTN', label: 'BTN' },
   ],
 };
 
