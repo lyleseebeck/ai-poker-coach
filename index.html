@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Poker Hand Tracker</title>
+  <!-- Tailwind CSS from CDN: no install needed, just loads styles -->
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-800">
+  <div class="max-w-2xl mx-auto px-4 py-8">
+    <!-- Header -->
+    <header class="mb-8">
+      <h1 class="text-2xl font-semibold text-slate-800">Poker Hand Tracker</h1>
+      <p class="text-slate-500 text-sm mt-1">Log hands and review them later. Data stays in your browser.</p>
+    </header>
+
+    <!-- Form: add a new hand -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-8">
+      <h2 class="text-lg font-medium text-slate-700 mb-4">Add a hand</h2>
+      <form id="hand-form" class="space-y-4">
+        <div>
+          <label for="card1" class="block text-sm font-medium text-slate-600 mb-1">My cards</label>
+          <div class="flex gap-2">
+            <input type="text" id="card1" name="card1" placeholder="e.g. As"
+              class="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+              maxlength="3">
+            <input type="text" id="card2" name="card2" placeholder="e.g. Kh"
+              class="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+              maxlength="3">
+          </div>
+          <p class="text-xs text-slate-400 mt-1">Use format: rank + suit (2–9, T, J, Q, K, A) + (c, d, h, s)</p>
+        </div>
+
+        <div>
+          <label for="position" class="block text-sm font-medium text-slate-600 mb-1">Position</label>
+          <select id="position" name="position"
+            class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white">
+            <option value="">Select position</option>
+            <option value="BTN">BTN (Button)</option>
+            <option value="SB">SB (Small Blind)</option>
+            <option value="BB">BB (Big Blind)</option>
+            <option value="UTG">UTG</option>
+            <option value="UTG+1">UTG+1</option>
+            <option value="MP">MP (Middle)</option>
+            <option value="HJ">HJ (Hijack)</option>
+            <option value="CO">CO (Cutoff)</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="action" class="block text-sm font-medium text-slate-600 mb-1">Action</label>
+          <select id="action" name="action"
+            class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white">
+            <option value="">What did you do?</option>
+            <option value="Fold">Fold</option>
+            <option value="Check">Check</option>
+            <option value="Call">Call</option>
+            <option value="Bet">Bet</option>
+            <option value="Raise">Raise</option>
+            <option value="All-in">All-in</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="opponent-cards" class="block text-sm font-medium text-slate-600 mb-1">Opponent cards (optional)</label>
+          <input type="text" id="opponent-cards" name="opponentCards" placeholder="e.g. Ac Kc or leave blank"
+            class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none">
+        </div>
+
+        <div>
+          <label for="outcome" class="block text-sm font-medium text-slate-600 mb-1">Outcome</label>
+          <select id="outcome" name="outcome"
+            class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white">
+            <option value="">Select outcome</option>
+            <option value="win">Win</option>
+            <option value="loss">Loss</option>
+            <option value="tie">Tie</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="notes" class="block text-sm font-medium text-slate-600 mb-1">Notes (optional)</label>
+          <textarea id="notes" name="notes" rows="2" placeholder="Any extra context..."
+            class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none resize-none"></textarea>
+        </div>
+
+        <button type="submit"
+          class="w-full bg-emerald-600 text-white font-medium py-2.5 rounded-lg hover:bg-emerald-700 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 transition">
+          Save hand
+        </button>
+      </form>
+    </section>
+
+    <!-- List of saved hands -->
+    <section class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+      <h2 class="text-lg font-medium text-slate-700 mb-4">Saved hands</h2>
+      <div id="hand-list" class="space-y-3">
+        <!-- Hands are inserted here by JavaScript -->
+        <p id="empty-message" class="text-slate-400 text-sm">No hands saved yet. Add one above.</p>
+      </div>
+    </section>
+  </div>
+
+  <!-- Our app logic runs after the page is loaded -->
+  <script src="app.js"></script>
+</body>
+</html>
