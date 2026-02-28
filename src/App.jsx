@@ -1,11 +1,24 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { getHands } from './lib/storage.js';
+import { normalizeCard } from './lib/cards.js';
 import { CardPicker } from './components/CardPicker.jsx';
 import { CardLogo } from './components/CardLogo.jsx';
-import { PositionSelector } from './components/PositionSelector.jsx';
 import { ImportSection } from './components/ImportSection.jsx';
 import { QuickAddForm } from './components/QuickAddForm.jsx';
 import { HandList } from './components/HandList.jsx';
+import { HandDetailsForm } from './components/HandDetailsForm.jsx';
+
+const HERO_SLOT_IDS = ['hero-card1', 'hero-card2'];
+const COMMUNITY_SLOT_IDS = ['import-flop1', 'import-flop2', 'import-flop3', 'import-turn', 'import-river'];
+const SLOT_LABELS = {
+  'hero-card1': 'Hole card 1',
+  'hero-card2': 'Hole card 2',
+  'import-flop1': 'Flop 1',
+  'import-flop2': 'Flop 2',
+  'import-flop3': 'Flop 3',
+  'import-turn': 'Turn',
+  'import-river': 'River',
+};
 
 export function App() {
   const [hands, setHands] = useState(() => getHands());
@@ -13,36 +26,98 @@ export function App() {
   const [heroCard2, setHeroCard2] = useState('');
   const [numPlayers, setNumPlayers] = useState(8);
   const [heroPosition, setHeroPosition] = useState('');
+  const [noFlop, setNoFlop] = useState(false);
+  const [flop1, setFlop1] = useState('');
+  const [flop2, setFlop2] = useState('');
+  const [flop3, setFlop3] = useState('');
+  const [turn, setTurn] = useState('');
+  const [river, setRiver] = useState('');
   const [cardPickerTargetId, setCardPickerTargetId] = useState(null);
   const [cardPickerRank, setCardPickerRank] = useState(null);
-  const applyCardRef = useRef(null);
+  const [cardPickerError, setCardPickerError] = useState('');
+  const [importHasInput, setImportHasInput] = useState(false);
+  const [importedNumPlayers, setImportedNumPlayers] = useState(null);
+  const [importedHeroPosition, setImportedHeroPosition] = useState('');
+  const [importedAction, setImportedAction] = useState('');
+  const [importedOutcome, setImportedOutcome] = useState('');
 
   const refreshHands = useCallback(() => {
     setHands(getHands());
   }, []);
 
-  const registerCardPickerTarget = useCallback((id, setValue) => {
+  const registerCardPickerTarget = useCallback((id) => {
     setCardPickerTargetId(id);
     setCardPickerRank(null);
-    applyCardRef.current = setValue;
+    setCardPickerError('');
   }, []);
 
-  const firstEmptyHeroSlot =
-    !heroCard1.trim() ? 'hero-card1' : !heroCard2.trim() ? 'hero-card2' : null;
-  const effectiveTargetId = cardPickerTargetId || firstEmptyHeroSlot;
+  useEffect(() => {
+    if (noFlop && cardPickerTargetId && cardPickerTargetId.startsWith('import-')) {
+      setCardPickerTargetId(null);
+      setCardPickerError('');
+    }
+  }, [noFlop, cardPickerTargetId]);
+
+  const cardValuesById = {
+    'hero-card1': heroCard1,
+    'hero-card2': heroCard2,
+    'import-flop1': flop1,
+    'import-flop2': flop2,
+    'import-flop3': flop3,
+    'import-turn': turn,
+    'import-river': river,
+  };
+
+  const firstEmptyHeroSlot = HERO_SLOT_IDS.find((id) => !normalizeCard(cardValuesById[id])) || null;
+  const firstEmptyCommunitySlot =
+    !noFlop ? COMMUNITY_SLOT_IDS.find((id) => !normalizeCard(cardValuesById[id])) || null : null;
+  const effectiveTargetId = cardPickerTargetId || firstEmptyHeroSlot || firstEmptyCommunitySlot;
+
+  const setCardBySlotId = useCallback((slotId, card) => {
+    if (slotId === 'hero-card1') setHeroCard1(card);
+    else if (slotId === 'hero-card2') setHeroCard2(card);
+    else if (slotId === 'import-flop1') setFlop1(card);
+    else if (slotId === 'import-flop2') setFlop2(card);
+    else if (slotId === 'import-flop3') setFlop3(card);
+    else if (slotId === 'import-turn') setTurn(card);
+    else if (slotId === 'import-river') setRiver(card);
+  }, []);
 
   const onApplyCard = useCallback(
     (card) => {
-      if (applyCardRef.current) {
-        applyCardRef.current(card);
-      } else if (!heroCard1.trim()) {
-        setHeroCard1(card);
-      } else if (!heroCard2.trim()) {
-        setHeroCard2(card);
+      const targetId = effectiveTargetId;
+      const normalized = normalizeCard(card);
+      if (!targetId || !normalized) return;
+
+      const activeSlotIds = noFlop ? HERO_SLOT_IDS : [...HERO_SLOT_IDS, ...COMMUNITY_SLOT_IDS];
+      const duplicateSlotId = activeSlotIds.find(
+        (id) => id !== targetId && normalizeCard(cardValuesById[id]) === normalized
+      );
+      if (duplicateSlotId) {
+        setCardPickerError(
+          `Duplicate card: ${normalized}. ${SLOT_LABELS[targetId]} cannot match ${SLOT_LABELS[duplicateSlotId]}.`
+        );
+        return;
       }
+
+      setCardPickerError('');
+      setCardBySlotId(targetId, normalized);
+      setCardPickerTargetId(null);
     },
-    [heroCard1, heroCard2]
+    [effectiveTargetId, noFlop, cardValuesById, setCardBySlotId]
   );
+
+  const handleImportStateChange = useCallback((state) => {
+    const hasInput = Boolean(state?.hasInput);
+    setImportHasInput(hasInput);
+    setImportedNumPlayers(hasInput ? state?.numPlayers ?? null : null);
+    setImportedHeroPosition(hasInput ? state?.heroPosition ?? '' : '');
+    setImportedAction(hasInput ? state?.action ?? '' : '');
+    setImportedOutcome(hasInput ? state?.outcome ?? '' : '');
+  }, []);
+
+  const effectiveNumPlayers = importHasInput ? importedNumPlayers : numPlayers;
+  const effectiveHeroPosition = importHasInput ? importedHeroPosition : heroPosition;
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
@@ -59,6 +134,7 @@ export function App() {
         onSelectRank={setCardPickerRank}
         onApplyCard={onApplyCard}
       />
+      {cardPickerError && <p className="mb-6 -mt-4 text-sm text-red-600">{cardPickerError}</p>}
 
       <section className="mb-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-medium text-slate-700 mb-2">Your hand (hero)</h2>
@@ -66,7 +142,7 @@ export function App() {
         <div className="flex gap-3">
           <button
             type="button"
-            onClick={() => registerCardPickerTarget('hero-card1', setHeroCard1)}
+            onClick={() => registerCardPickerTarget('hero-card1')}
             className="flex flex-col items-center gap-1 rounded-lg border-2 border-transparent p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
             aria-label="Select card 1"
           >
@@ -75,7 +151,7 @@ export function App() {
           </button>
           <button
             type="button"
-            onClick={() => registerCardPickerTarget('hero-card2', setHeroCard2)}
+            onClick={() => registerCardPickerTarget('hero-card2')}
             className="flex flex-col items-center gap-1 rounded-lg border-2 border-transparent p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
             aria-label="Select card 2"
           >
@@ -85,25 +161,43 @@ export function App() {
         </div>
       </section>
 
-      <PositionSelector
-        numPlayers={numPlayers}
-        setNumPlayers={setNumPlayers}
-        heroPosition={heroPosition}
-        setHeroPosition={setHeroPosition}
+      <HandDetailsForm
+        noFlop={noFlop}
+        setNoFlop={setNoFlop}
+        flop1={flop1}
+        flop2={flop2}
+        flop3={flop3}
+        turn={turn}
+        river={river}
+        registerCardPickerTarget={registerCardPickerTarget}
+        activeCardTargetId={cardPickerTargetId}
       />
 
       <ImportSection
         onHandsChange={refreshHands}
+        onImportStateChange={handleImportStateChange}
         heroCard1={heroCard1}
         heroCard2={heroCard2}
-        registerCardPickerTarget={registerCardPickerTarget}
+        noFlop={noFlop}
+        flop1={flop1}
+        flop2={flop2}
+        flop3={flop3}
+        turn={turn}
+        river={river}
       />
 
       <QuickAddForm
         onHandsChange={refreshHands}
         heroCard1={heroCard1}
         heroCard2={heroCard2}
-        heroPosition={heroPosition}
+        heroPosition={effectiveHeroPosition}
+        setHeroPosition={setHeroPosition}
+        numPlayers={effectiveNumPlayers}
+        setNumPlayers={setNumPlayers}
+        positionLocked={importHasInput}
+        hasParsedImportData={Boolean(importedNumPlayers !== null || importedHeroPosition)}
+        importedAction={importedAction}
+        importedOutcome={importedOutcome}
       />
 
       <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">

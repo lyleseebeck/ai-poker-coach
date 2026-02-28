@@ -1,18 +1,72 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { parseIgnitionHandHistory } from '../lib/ignitionParser.js';
 import { generateId, getHands, saveHands } from '../lib/storage.js';
-import { HandDetailsForm } from './HandDetailsForm.jsx';
+import { findDuplicateCard, normalizeCard } from '../lib/cards.js';
 
-export function ImportSection({ onHandsChange, heroCard1, heroCard2, registerCardPickerTarget }) {
+function normalizePosition(value) {
+  return String(value || '')
+    .replace(/\s*\[ME\]\s*$/i, '')
+    .trim()
+    .toUpperCase();
+}
+
+function mapActionLabel(actionText) {
+  const text = String(actionText || '').toLowerCase();
+  if (!text) return '';
+  if (text.includes('all-in') || text.includes('all in')) return 'All-in';
+  if (text.includes('raise')) return 'Raise';
+  if (text.includes('bet')) return 'Bet';
+  if (text.includes('call')) return 'Call';
+  if (text.includes('check')) return 'Check';
+  if (text.includes('fold')) return 'Fold';
+  return '';
+}
+
+function inferHeroAction(parsedHand, heroPosition) {
+  if (!parsedHand?.actions?.length || !heroPosition) return '';
+  const heroPos = normalizePosition(heroPosition);
+  let lastMappedAction = '';
+  for (const action of parsedHand.actions) {
+    if (normalizePosition(action?.position) !== heroPos) continue;
+    const mapped = mapActionLabel(action?.action);
+    if (mapped) lastMappedAction = mapped;
+  }
+  return lastMappedAction;
+}
+
+function inferOutcomeFromWinLoss(parsedHand) {
+  const me = parsedHand?.players?.find((p) => p.isMe);
+  if (!me || me.winLoss == null) return '';
+  if (me.winLoss > 0) return 'win';
+  if (me.winLoss < 0) return 'loss';
+  return 'tie';
+}
+
+export function ImportSection({
+  onHandsChange,
+  onImportStateChange,
+  heroCard1,
+  heroCard2,
+  noFlop,
+  flop1,
+  flop2,
+  flop3,
+  turn,
+  river,
+}) {
   const [rawText, setRawText] = useState('');
   const [parsedHand, setParsedHand] = useState(null);
   const [importError, setImportError] = useState('');
-  const [noFlop, setNoFlop] = useState(false);
-  const [flop1, setFlop1] = useState('');
-  const [flop2, setFlop2] = useState('');
-  const [flop3, setFlop3] = useState('');
-  const [turn, setTurn] = useState('');
-  const [river, setRiver] = useState('');
+
+  useEffect(() => {
+    const hasInput = rawText.trim().length > 0;
+    const me = parsedHand?.players?.find((p) => p.isMe);
+    const heroPosition = me?.position || '';
+    const numPlayers = Array.isArray(parsedHand?.players) ? parsedHand.players.length : null;
+    const action = inferHeroAction(parsedHand, heroPosition);
+    const outcome = inferOutcomeFromWinLoss(parsedHand);
+    onImportStateChange?.({ hasInput, heroPosition, numPlayers, action, outcome });
+  }, [rawText, parsedHand, onImportStateChange]);
 
   const handleParse = () => {
     setImportError('');
@@ -39,7 +93,9 @@ export function ImportSection({ onHandsChange, heroCard1, heroCard2, registerCar
   const handleSave = () => {
     if (!parsedHand) return;
     setImportError('');
-    if (!heroCard1.trim() || !heroCard2.trim()) {
+    const normalizedHeroCard1 = normalizeCard(heroCard1);
+    const normalizedHeroCard2 = normalizeCard(heroCard2);
+    if (!normalizedHeroCard1 || !normalizedHeroCard2) {
       setImportError('Select your two hole cards in "Your hand" above first.');
       return;
     }
@@ -49,12 +105,24 @@ export function ImportSection({ onHandsChange, heroCard1, heroCard2, registerCar
     }
     const communityCards = [];
     if (!noFlop) {
-      if (flop1.trim()) communityCards.push(flop1.trim());
-      if (flop2.trim()) communityCards.push(flop2.trim());
-      if (flop3.trim()) communityCards.push(flop3.trim());
-      if (turn.trim()) communityCards.push(turn.trim());
-      if (river.trim()) communityCards.push(river.trim());
+      const normalizedFlop1 = normalizeCard(flop1);
+      const normalizedFlop2 = normalizeCard(flop2);
+      const normalizedFlop3 = normalizeCard(flop3);
+      const normalizedTurn = normalizeCard(turn);
+      const normalizedRiver = normalizeCard(river);
+      if (normalizedFlop1) communityCards.push(normalizedFlop1);
+      if (normalizedFlop2) communityCards.push(normalizedFlop2);
+      if (normalizedFlop3) communityCards.push(normalizedFlop3);
+      if (normalizedTurn) communityCards.push(normalizedTurn);
+      if (normalizedRiver) communityCards.push(normalizedRiver);
     }
+
+    const duplicateCard = findDuplicateCard([normalizedHeroCard1, normalizedHeroCard2, ...communityCards]);
+    if (duplicateCard) {
+      setImportError(`Duplicate card detected (${duplicateCard}). Hole cards and community cards must all be unique.`);
+      return;
+    }
+
     const hand = {
       id: generateId(),
       source: 'ignition',
@@ -66,7 +134,7 @@ export function ImportSection({ onHandsChange, heroCard1, heroCard2, registerCar
       gameType: parsedHand.gameType,
       playMode: parsedHand.playMode,
       tableName: parsedHand.tableName,
-      myCards: [heroCard1.trim(), heroCard2.trim()],
+      myCards: [normalizedHeroCard1, normalizedHeroCard2],
       communityCards,
       handDidNotReachFlop: noFlop,
       players: parsedHand.players || [],
@@ -134,24 +202,10 @@ export function ImportSection({ onHandsChange, heroCard1, heroCard2, registerCar
             <div className="text-sm text-slate-600 flex flex-wrap gap-x-2 gap-y-1">
               {previewNodes}
             </div>
+            <p className="text-xs text-slate-500 mt-2">
+              Community cards are selected in the Community cards section above.
+            </p>
           </div>
-          <HandDetailsForm
-            heroCard1={heroCard1}
-            heroCard2={heroCard2}
-            noFlop={noFlop}
-            setNoFlop={setNoFlop}
-            flop1={flop1}
-            setFlop1={setFlop1}
-            flop2={flop2}
-            setFlop2={setFlop2}
-            flop3={flop3}
-            setFlop3={setFlop3}
-            turn={turn}
-            setTurn={setTurn}
-            river={river}
-            setRiver={setRiver}
-            registerCardPickerTarget={registerCardPickerTarget}
-          />
         </>
       )}
       {importError && <p className="mt-3 text-sm text-red-600">{importError}</p>}

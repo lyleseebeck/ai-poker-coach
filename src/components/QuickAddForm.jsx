@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { generateId, getHands, saveHands } from '../lib/storage.js';
+import { POSITIONS_BY_PLAYERS, PLAYER_COUNTS } from '../lib/positions.js';
 import { CardLogo } from './CardLogo.jsx';
 
 const ACTIONS = [
@@ -18,11 +19,36 @@ const OUTCOMES = [
   { value: 'tie', label: 'Tie' },
 ];
 
-export function QuickAddForm({ onHandsChange, heroCard1, heroCard2, heroPosition }) {
+export function QuickAddForm({
+  onHandsChange,
+  heroCard1,
+  heroCard2,
+  heroPosition,
+  setHeroPosition,
+  numPlayers,
+  setNumPlayers,
+  positionLocked,
+  hasParsedImportData,
+  importedAction,
+  importedOutcome,
+}) {
   const [action, setAction] = useState('');
   const [opponentCards, setOpponentCards] = useState('');
   const [outcome, setOutcome] = useState('');
   const [notes, setNotes] = useState('');
+  const positions = POSITIONS_BY_PLAYERS[numPlayers] || [];
+  const actionLocked = Boolean(importedAction);
+  const outcomeLocked = Boolean(importedOutcome);
+  const effectiveAction = actionLocked ? importedAction : action;
+  const effectiveOutcome = outcomeLocked ? importedOutcome : outcome;
+
+  const handlePlayersChange = (n) => {
+    const newCount = Number(n);
+    setNumPlayers(newCount);
+    const newPositions = POSITIONS_BY_PLAYERS[newCount] || [];
+    const stillValid = newPositions.some((p) => p.value === heroPosition);
+    if (!stillValid) setHeroPosition('');
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -30,7 +56,7 @@ export function QuickAddForm({ onHandsChange, heroCard1, heroCard2, heroPosition
       alert('Select your two hole cards in "Your hand" at the top first.');
       return;
     }
-    if (!outcome) {
+    if (!effectiveOutcome) {
       alert('Please select an outcome (Win / Loss / Tie).');
       return;
     }
@@ -39,9 +65,10 @@ export function QuickAddForm({ onHandsChange, heroCard1, heroCard2, heroPosition
       card1: heroCard1.trim(),
       card2: heroCard2.trim(),
       position: heroPosition || undefined,
-      action: action || undefined,
+      numPlayers: typeof numPlayers === 'number' ? numPlayers : undefined,
+      action: effectiveAction || undefined,
       opponentCards: opponentCards.trim() || undefined,
-      outcome,
+      outcome: effectiveOutcome,
       notes: notes.trim() || undefined,
       createdAt: Date.now(),
     };
@@ -71,23 +98,75 @@ export function QuickAddForm({ onHandsChange, heroCard1, heroCard2, heroPosition
           <p className="text-xs text-slate-400 mt-1">Change your hole cards in “Your hand” at the top.</p>
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-600 mb-1">Position (from above)</label>
-          <div className="flex items-center gap-2">
-            <span className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 font-medium">
-              {heroPosition || '—'}
-            </span>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">Change your position in the Position section above.</p>
+          <label className="block text-sm font-medium text-slate-600 mb-1">Table info</label>
+          {positionLocked ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 font-medium">
+                  Players: {numPlayers ?? '—'}
+                </span>
+                <span className="px-3 py-2 rounded-lg bg-slate-100 text-slate-800 font-medium">
+                  Position: {heroPosition || '—'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                {hasParsedImportData
+                  ? 'Using players/position from the imported hand history.'
+                  : 'Import text detected. Parse & preview to populate players/position, or clear the import text to edit manually.'}
+              </p>
+            </>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-sm text-slate-600">Players at table</span>
+                <select
+                  value={numPlayers}
+                  onChange={(e) => handlePlayersChange(e.target.value)}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white"
+                >
+                  {PLAYER_COUNTS.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-sm text-slate-600">Your position (hero)</p>
+              <div className="flex flex-wrap gap-2">
+                {positions.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setHeroPosition(heroPosition === value ? '' : value)}
+                    className={
+                      'px-3 py-2 rounded-lg border text-sm font-medium transition ' +
+                      (heroPosition === value
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100')
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Action</label>
-          <select value={action} onChange={(e) => setAction(e.target.value)} className={inputClass}>
+          <select
+            value={effectiveAction}
+            onChange={(e) => setAction(e.target.value)}
+            disabled={actionLocked}
+            className={inputClass + (actionLocked ? ' bg-slate-100 text-slate-500 cursor-not-allowed' : '')}
+          >
             {ACTIONS.map((opt) => (
               <option key={opt.value || 'empty'} value={opt.value}>
                 {opt.label}
               </option>
             ))}
           </select>
+          {actionLocked && <p className="text-xs text-slate-400 mt-1">Action locked from imported hand history.</p>}
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Opponent cards (optional)</label>
@@ -101,13 +180,19 @@ export function QuickAddForm({ onHandsChange, heroCard1, heroCard2, heroPosition
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Outcome</label>
-          <select value={outcome} onChange={(e) => setOutcome(e.target.value)} className={inputClass}>
+          <select
+            value={effectiveOutcome}
+            onChange={(e) => setOutcome(e.target.value)}
+            disabled={outcomeLocked}
+            className={inputClass + (outcomeLocked ? ' bg-slate-100 text-slate-500 cursor-not-allowed' : '')}
+          >
             {OUTCOMES.map((opt) => (
               <option key={opt.value || 'empty'} value={opt.value}>
                 {opt.label}
               </option>
             ))}
           </select>
+          {outcomeLocked && <p className="text-xs text-slate-400 mt-1">Outcome locked from imported hand history.</p>}
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Notes (optional)</label>
