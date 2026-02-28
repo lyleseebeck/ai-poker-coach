@@ -28,7 +28,7 @@ export function CardPicker({
 
   let hint;
   if (!targetId) {
-    hint = 'Click a hero or community card slot to choose where the next card goes.';
+    hint = 'All active card slots are filled. Click a slot to replace a card.';
   } else {
     const label = formatTargetLabel(targetId);
     hint = selectedRank
@@ -42,7 +42,7 @@ export function CardPicker({
       onMouseDown={(e) => e.preventDefault()}
     >
       <p className="text-sm text-slate-600 mb-3">
-        Select <strong>rank</strong> then <strong>suit</strong>. Click a hero or community card slot first to choose the target.
+        Select <strong>rank</strong> then <strong>suit</strong>. The picker auto-fills the next empty slot (hole cards, then board), or click a slot to override.
       </p>
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Rank</span>

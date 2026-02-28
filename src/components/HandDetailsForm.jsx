@@ -4,28 +4,23 @@ export function HandDetailsForm({
   noFlop,
   setNoFlop,
   flop1,
-  setFlop1,
   flop2,
-  setFlop2,
   flop3,
-  setFlop3,
   turn,
-  setTurn,
   river,
-  setRiver,
   registerCardPickerTarget,
   activeCardTargetId,
 }) {
   const communitySlots = [
-    { id: 'import-flop1', label: 'Flop 1', value: flop1, setValue: setFlop1 },
-    { id: 'import-flop2', label: 'Flop 2', value: flop2, setValue: setFlop2 },
-    { id: 'import-flop3', label: 'Flop 3', value: flop3, setValue: setFlop3 },
-    { id: 'import-turn', label: 'Turn', value: turn, setValue: setTurn },
-    { id: 'import-river', label: 'River', value: river, setValue: setRiver },
+    { id: 'import-flop1', label: 'Flop 1', value: flop1 },
+    { id: 'import-flop2', label: 'Flop 2', value: flop2 },
+    { id: 'import-flop3', label: 'Flop 3', value: flop3 },
+    { id: 'import-turn', label: 'Turn', value: turn },
+    { id: 'import-river', label: 'River', value: river },
   ];
 
-  const handleSelectSlot = (id, setValue) => {
-    registerCardPickerTarget?.(id, setValue);
+  const handleSelectSlot = (id) => {
+    registerCardPickerTarget?.(id);
   };
 
   return (
@@ -49,11 +44,11 @@ export function HandDetailsForm({
           <div className="space-y-2">
             <p className="text-xs text-slate-500">Click a slot, then choose rank and suit in the picker above.</p>
             <div className="flex flex-wrap gap-3">
-              {communitySlots.map(({ id, label, value, setValue }) => (
+              {communitySlots.map(({ id, label, value }) => (
                 <button
                   key={id}
                   type="button"
-                  onClick={() => handleSelectSlot(id, setValue)}
+                  onClick={() => handleSelectSlot(id)}
                   className={
                     'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 ' +
                     (activeCardTargetId === id ? 'border-emerald-500 bg-emerald-50/50' : 'border-transparent')

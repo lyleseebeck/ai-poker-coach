@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { parseIgnitionHandHistory } from '../lib/ignitionParser.js';
 import { generateId, getHands, saveHands } from '../lib/storage.js';
+import { findDuplicateCard, normalizeCard } from '../lib/cards.js';
 
 export function ImportSection({
   onHandsChange,
@@ -42,7 +43,9 @@ export function ImportSection({
   const handleSave = () => {
     if (!parsedHand) return;
     setImportError('');
-    if (!heroCard1.trim() || !heroCard2.trim()) {
+    const normalizedHeroCard1 = normalizeCard(heroCard1);
+    const normalizedHeroCard2 = normalizeCard(heroCard2);
+    if (!normalizedHeroCard1 || !normalizedHeroCard2) {
       setImportError('Select your two hole cards in "Your hand" above first.');
       return;
     }
@@ -52,12 +55,24 @@ export function ImportSection({
     }
     const communityCards = [];
     if (!noFlop) {
-      if (flop1.trim()) communityCards.push(flop1.trim());
-      if (flop2.trim()) communityCards.push(flop2.trim());
-      if (flop3.trim()) communityCards.push(flop3.trim());
-      if (turn.trim()) communityCards.push(turn.trim());
-      if (river.trim()) communityCards.push(river.trim());
+      const normalizedFlop1 = normalizeCard(flop1);
+      const normalizedFlop2 = normalizeCard(flop2);
+      const normalizedFlop3 = normalizeCard(flop3);
+      const normalizedTurn = normalizeCard(turn);
+      const normalizedRiver = normalizeCard(river);
+      if (normalizedFlop1) communityCards.push(normalizedFlop1);
+      if (normalizedFlop2) communityCards.push(normalizedFlop2);
+      if (normalizedFlop3) communityCards.push(normalizedFlop3);
+      if (normalizedTurn) communityCards.push(normalizedTurn);
+      if (normalizedRiver) communityCards.push(normalizedRiver);
     }
+
+    const duplicateCard = findDuplicateCard([normalizedHeroCard1, normalizedHeroCard2, ...communityCards]);
+    if (duplicateCard) {
+      setImportError(`Duplicate card detected (${duplicateCard}). Hole cards and community cards must all be unique.`);
+      return;
+    }
+
     const hand = {
       id: generateId(),
       source: 'ignition',
@@ -69,7 +84,7 @@ export function ImportSection({
       gameType: parsedHand.gameType,
       playMode: parsedHand.playMode,
       tableName: parsedHand.tableName,
-      myCards: [heroCard1.trim(), heroCard2.trim()],
+      myCards: [normalizedHeroCard1, normalizedHeroCard2],
       communityCards,
       handDidNotReachFlop: noFlop,
       players: parsedHand.players || [],
