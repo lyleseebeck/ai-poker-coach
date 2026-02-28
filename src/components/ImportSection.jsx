@@ -3,7 +3,13 @@ import { parseIgnitionHandHistory } from '../lib/ignitionParser.js';
 import { generateId, getHands, saveHands } from '../lib/storage.js';
 import { HandDetailsForm } from './HandDetailsForm.jsx';
 
-export function ImportSection({ onHandsChange, heroCard1, heroCard2, registerCardPickerTarget }) {
+export function ImportSection({
+  onHandsChange,
+  heroCard1,
+  heroCard2,
+  registerCardPickerTarget,
+  activeCardTargetId,
+}) {
   const [rawText, setRawText] = useState('');
   const [parsedHand, setParsedHand] = useState(null);
   const [importError, setImportError] = useState('');
@@ -151,6 +157,7 @@ export function ImportSection({ onHandsChange, heroCard1, heroCard2, registerCar
             river={river}
             setRiver={setRiver}
             registerCardPickerTarget={registerCardPickerTarget}
+            activeCardTargetId={activeCardTargetId}
           />
         </>
       )}

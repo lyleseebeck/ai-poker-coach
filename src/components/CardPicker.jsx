@@ -12,6 +12,13 @@ export function CardPicker({
   onSelectRank,
   onApplyCard,
 }) {
+  const formatTargetLabel = (id) =>
+    id
+      .replace(/^import-/, '')
+      .replace(/-/g, ' ')
+      .replace(/([A-Za-z])(\d)/g, '$1 $2')
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+
   const handleSuitClick = (suitKey) => {
     if (!selectedRank) return;
     const card = selectedRank + suitKey;
@@ -21,9 +28,9 @@ export function CardPicker({
 
   let hint;
   if (!targetId) {
-    hint = 'Both hole cards are set. Click a card field below to change one, or add/import a hand.';
+    hint = 'Click a hero or community card slot to choose where the next card goes.';
   } else {
-    const label = targetId.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    const label = formatTargetLabel(targetId);
     hint = selectedRank
       ? `${label}: rank ${selectedRank} — now click a suit.`
       : `${label} — click a rank, then a suit.`;
@@ -35,7 +42,7 @@ export function CardPicker({
       onMouseDown={(e) => e.preventDefault()}
     >
       <p className="text-sm text-slate-600 mb-3">
-        Select <strong>rank</strong> then <strong>suit</strong> — fills your first empty hole card. Or click a card field below to choose which slot.
+        Select <strong>rank</strong> then <strong>suit</strong>. Click a hero or community card slot first to choose the target.
       </p>
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Rank</span>

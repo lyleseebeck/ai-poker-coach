@@ -97,6 +97,7 @@ export function App() {
         heroCard1={heroCard1}
         heroCard2={heroCard2}
         registerCardPickerTarget={registerCardPickerTarget}
+        activeCardTargetId={cardPickerTargetId}
       />
 
       <QuickAddForm
