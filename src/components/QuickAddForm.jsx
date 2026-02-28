@@ -29,12 +29,18 @@ export function QuickAddForm({
   setNumPlayers,
   positionLocked,
   hasParsedImportData,
+  importedAction,
+  importedOutcome,
 }) {
   const [action, setAction] = useState('');
   const [opponentCards, setOpponentCards] = useState('');
   const [outcome, setOutcome] = useState('');
   const [notes, setNotes] = useState('');
   const positions = POSITIONS_BY_PLAYERS[numPlayers] || [];
+  const actionLocked = Boolean(importedAction);
+  const outcomeLocked = Boolean(importedOutcome);
+  const effectiveAction = actionLocked ? importedAction : action;
+  const effectiveOutcome = outcomeLocked ? importedOutcome : outcome;
 
   const handlePlayersChange = (n) => {
     const newCount = Number(n);
@@ -50,7 +56,7 @@ export function QuickAddForm({
       alert('Select your two hole cards in "Your hand" at the top first.');
       return;
     }
-    if (!outcome) {
+    if (!effectiveOutcome) {
       alert('Please select an outcome (Win / Loss / Tie).');
       return;
     }
@@ -60,9 +66,9 @@ export function QuickAddForm({
       card2: heroCard2.trim(),
       position: heroPosition || undefined,
       numPlayers: typeof numPlayers === 'number' ? numPlayers : undefined,
-      action: action || undefined,
+      action: effectiveAction || undefined,
       opponentCards: opponentCards.trim() || undefined,
-      outcome,
+      outcome: effectiveOutcome,
       notes: notes.trim() || undefined,
       createdAt: Date.now(),
     };
@@ -148,13 +154,19 @@ export function QuickAddForm({
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Action</label>
-          <select value={action} onChange={(e) => setAction(e.target.value)} className={inputClass}>
+          <select
+            value={effectiveAction}
+            onChange={(e) => setAction(e.target.value)}
+            disabled={actionLocked}
+            className={inputClass + (actionLocked ? ' bg-slate-100 text-slate-500 cursor-not-allowed' : '')}
+          >
             {ACTIONS.map((opt) => (
               <option key={opt.value || 'empty'} value={opt.value}>
                 {opt.label}
               </option>
             ))}
           </select>
+          {actionLocked && <p className="text-xs text-slate-400 mt-1">Action locked from imported hand history.</p>}
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Opponent cards (optional)</label>
@@ -168,13 +180,19 @@ export function QuickAddForm({
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Outcome</label>
-          <select value={outcome} onChange={(e) => setOutcome(e.target.value)} className={inputClass}>
+          <select
+            value={effectiveOutcome}
+            onChange={(e) => setOutcome(e.target.value)}
+            disabled={outcomeLocked}
+            className={inputClass + (outcomeLocked ? ' bg-slate-100 text-slate-500 cursor-not-allowed' : '')}
+          >
             {OUTCOMES.map((opt) => (
               <option key={opt.value || 'empty'} value={opt.value}>
                 {opt.label}
               </option>
             ))}
           </select>
+          {outcomeLocked && <p className="text-xs text-slate-400 mt-1">Outcome locked from imported hand history.</p>}
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Notes (optional)</label>

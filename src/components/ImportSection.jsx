@@ -3,6 +3,45 @@ import { parseIgnitionHandHistory } from '../lib/ignitionParser.js';
 import { generateId, getHands, saveHands } from '../lib/storage.js';
 import { findDuplicateCard, normalizeCard } from '../lib/cards.js';
 
+function normalizePosition(value) {
+  return String(value || '')
+    .replace(/\s*\[ME\]\s*$/i, '')
+    .trim()
+    .toUpperCase();
+}
+
+function mapActionLabel(actionText) {
+  const text = String(actionText || '').toLowerCase();
+  if (!text) return '';
+  if (text.includes('all-in') || text.includes('all in')) return 'All-in';
+  if (text.includes('raise')) return 'Raise';
+  if (text.includes('bet')) return 'Bet';
+  if (text.includes('call')) return 'Call';
+  if (text.includes('check')) return 'Check';
+  if (text.includes('fold')) return 'Fold';
+  return '';
+}
+
+function inferHeroAction(parsedHand, heroPosition) {
+  if (!parsedHand?.actions?.length || !heroPosition) return '';
+  const heroPos = normalizePosition(heroPosition);
+  let lastMappedAction = '';
+  for (const action of parsedHand.actions) {
+    if (normalizePosition(action?.position) !== heroPos) continue;
+    const mapped = mapActionLabel(action?.action);
+    if (mapped) lastMappedAction = mapped;
+  }
+  return lastMappedAction;
+}
+
+function inferOutcomeFromWinLoss(parsedHand) {
+  const me = parsedHand?.players?.find((p) => p.isMe);
+  if (!me || me.winLoss == null) return '';
+  if (me.winLoss > 0) return 'win';
+  if (me.winLoss < 0) return 'loss';
+  return 'tie';
+}
+
 export function ImportSection({
   onHandsChange,
   onImportStateChange,
@@ -24,7 +63,9 @@ export function ImportSection({
     const me = parsedHand?.players?.find((p) => p.isMe);
     const heroPosition = me?.position || '';
     const numPlayers = Array.isArray(parsedHand?.players) ? parsedHand.players.length : null;
-    onImportStateChange?.({ hasInput, heroPosition, numPlayers });
+    const action = inferHeroAction(parsedHand, heroPosition);
+    const outcome = inferOutcomeFromWinLoss(parsedHand);
+    onImportStateChange?.({ hasInput, heroPosition, numPlayers, action, outcome });
   }, [rawText, parsedHand, onImportStateChange]);
 
   const handleParse = () => {

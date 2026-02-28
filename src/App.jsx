@@ -38,6 +38,8 @@ export function App() {
   const [importHasInput, setImportHasInput] = useState(false);
   const [importedNumPlayers, setImportedNumPlayers] = useState(null);
   const [importedHeroPosition, setImportedHeroPosition] = useState('');
+  const [importedAction, setImportedAction] = useState('');
+  const [importedOutcome, setImportedOutcome] = useState('');
 
   const refreshHands = useCallback(() => {
     setHands(getHands());
@@ -110,6 +112,8 @@ export function App() {
     setImportHasInput(hasInput);
     setImportedNumPlayers(hasInput ? state?.numPlayers ?? null : null);
     setImportedHeroPosition(hasInput ? state?.heroPosition ?? '' : '');
+    setImportedAction(hasInput ? state?.action ?? '' : '');
+    setImportedOutcome(hasInput ? state?.outcome ?? '' : '');
   }, []);
 
   const effectiveNumPlayers = importHasInput ? importedNumPlayers : numPlayers;
@@ -192,6 +196,8 @@ export function App() {
         setNumPlayers={setNumPlayers}
         positionLocked={importHasInput}
         hasParsedImportData={Boolean(importedNumPlayers !== null || importedHeroPosition)}
+        importedAction={importedAction}
+        importedOutcome={importedOutcome}
       />
 
       <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
