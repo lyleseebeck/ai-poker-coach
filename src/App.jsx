@@ -6,6 +6,7 @@ import { PositionSelector } from './components/PositionSelector.jsx';
 import { ImportSection } from './components/ImportSection.jsx';
 import { QuickAddForm } from './components/QuickAddForm.jsx';
 import { HandList } from './components/HandList.jsx';
+import { HandDetailsForm } from './components/HandDetailsForm.jsx';
 
 export function App() {
   const [hands, setHands] = useState(() => getHands());
@@ -13,6 +14,12 @@ export function App() {
   const [heroCard2, setHeroCard2] = useState('');
   const [numPlayers, setNumPlayers] = useState(8);
   const [heroPosition, setHeroPosition] = useState('');
+  const [noFlop, setNoFlop] = useState(false);
+  const [flop1, setFlop1] = useState('');
+  const [flop2, setFlop2] = useState('');
+  const [flop3, setFlop3] = useState('');
+  const [turn, setTurn] = useState('');
+  const [river, setRiver] = useState('');
   const [cardPickerTargetId, setCardPickerTargetId] = useState(null);
   const [cardPickerRank, setCardPickerRank] = useState(null);
   const applyCardRef = useRef(null);
@@ -85,6 +92,23 @@ export function App() {
         </div>
       </section>
 
+      <HandDetailsForm
+        noFlop={noFlop}
+        setNoFlop={setNoFlop}
+        flop1={flop1}
+        setFlop1={setFlop1}
+        flop2={flop2}
+        setFlop2={setFlop2}
+        flop3={flop3}
+        setFlop3={setFlop3}
+        turn={turn}
+        setTurn={setTurn}
+        river={river}
+        setRiver={setRiver}
+        registerCardPickerTarget={registerCardPickerTarget}
+        activeCardTargetId={cardPickerTargetId}
+      />
+
       <PositionSelector
         numPlayers={numPlayers}
         setNumPlayers={setNumPlayers}
@@ -96,8 +120,12 @@ export function App() {
         onHandsChange={refreshHands}
         heroCard1={heroCard1}
         heroCard2={heroCard2}
-        registerCardPickerTarget={registerCardPickerTarget}
-        activeCardTargetId={cardPickerTargetId}
+        noFlop={noFlop}
+        flop1={flop1}
+        flop2={flop2}
+        flop3={flop3}
+        turn={turn}
+        river={river}
       />
 
       <QuickAddForm

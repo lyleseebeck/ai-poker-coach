@@ -1,8 +1,6 @@
 import { CardLogo } from './CardLogo.jsx';
 
 export function HandDetailsForm({
-  heroCard1,
-  heroCard2,
   noFlop,
   setNoFlop,
   flop1,
@@ -31,19 +29,10 @@ export function HandDetailsForm({
   };
 
   return (
-    <div className="mt-4 rounded-lg border border-slate-200 border-amber-200 bg-amber-50/50 p-4">
-      <h3 className="text-sm font-medium text-slate-700 mb-3">
-        Hand details <span className="text-amber-600">(required to save)</span>
-      </h3>
+    <section className="mb-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h2 className="text-lg font-medium text-slate-700 mb-2">Community cards</h2>
+      <p className="text-slate-500 text-sm mb-3">Click a board slot, then use the selector above.</p>
       <div className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-slate-600 mb-1">Your hand (from above)</label>
-          <div className="flex items-center gap-2">
-            <CardLogo value={heroCard1} />
-            <CardLogo value={heroCard2} />
-          </div>
-          <p className="text-xs text-slate-400 mt-1">Change your hole cards in “Your hand” at the top.</p>
-        </div>
         <div className="flex items-center gap-2">
           <input
             type="checkbox"
@@ -58,7 +47,6 @@ export function HandDetailsForm({
         </div>
         {!noFlop && (
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-slate-600">Community cards</label>
             <p className="text-xs text-slate-500">Click a slot, then choose rank and suit in the picker above.</p>
             <div className="flex flex-wrap gap-3">
               {communitySlots.map(({ id, label, value, setValue }) => (
@@ -77,10 +65,10 @@ export function HandDetailsForm({
                 </button>
               ))}
             </div>
-            <p className="text-xs text-slate-400">Required: at least the 3 flop cards if the hand saw the flop.</p>
+            <p className="text-xs text-slate-400">For imported hands, at least the 3 flop cards are required unless pre-flop.</p>
           </div>
         )}
       </div>
-    </div>
+    </section>
   );
 }

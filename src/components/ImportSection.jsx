@@ -1,24 +1,21 @@
 import { useState } from 'react';
 import { parseIgnitionHandHistory } from '../lib/ignitionParser.js';
 import { generateId, getHands, saveHands } from '../lib/storage.js';
-import { HandDetailsForm } from './HandDetailsForm.jsx';
 
 export function ImportSection({
   onHandsChange,
   heroCard1,
   heroCard2,
-  registerCardPickerTarget,
-  activeCardTargetId,
+  noFlop,
+  flop1,
+  flop2,
+  flop3,
+  turn,
+  river,
 }) {
   const [rawText, setRawText] = useState('');
   const [parsedHand, setParsedHand] = useState(null);
   const [importError, setImportError] = useState('');
-  const [noFlop, setNoFlop] = useState(false);
-  const [flop1, setFlop1] = useState('');
-  const [flop2, setFlop2] = useState('');
-  const [flop3, setFlop3] = useState('');
-  const [turn, setTurn] = useState('');
-  const [river, setRiver] = useState('');
 
   const handleParse = () => {
     setImportError('');
@@ -140,25 +137,10 @@ export function ImportSection({
             <div className="text-sm text-slate-600 flex flex-wrap gap-x-2 gap-y-1">
               {previewNodes}
             </div>
+            <p className="text-xs text-slate-500 mt-2">
+              Community cards are selected in the Community cards section above.
+            </p>
           </div>
-          <HandDetailsForm
-            heroCard1={heroCard1}
-            heroCard2={heroCard2}
-            noFlop={noFlop}
-            setNoFlop={setNoFlop}
-            flop1={flop1}
-            setFlop1={setFlop1}
-            flop2={flop2}
-            setFlop2={setFlop2}
-            flop3={flop3}
-            setFlop3={setFlop3}
-            turn={turn}
-            setTurn={setTurn}
-            river={river}
-            setRiver={setRiver}
-            registerCardPickerTarget={registerCardPickerTarget}
-            activeCardTargetId={activeCardTargetId}
-          />
         </>
       )}
       {importError && <p className="mt-3 text-sm text-red-600">{importError}</p>}
