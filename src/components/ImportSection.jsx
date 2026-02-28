@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { parseIgnitionHandHistory } from '../lib/ignitionParser.js';
 import { generateId, getHands, saveHands } from '../lib/storage.js';
 import { findDuplicateCard, normalizeCard } from '../lib/cards.js';
 
 export function ImportSection({
   onHandsChange,
+  onImportStateChange,
   heroCard1,
   heroCard2,
   noFlop,
@@ -17,6 +18,14 @@ export function ImportSection({
   const [rawText, setRawText] = useState('');
   const [parsedHand, setParsedHand] = useState(null);
   const [importError, setImportError] = useState('');
+
+  useEffect(() => {
+    const hasInput = rawText.trim().length > 0;
+    const me = parsedHand?.players?.find((p) => p.isMe);
+    const heroPosition = me?.position || '';
+    const numPlayers = Array.isArray(parsedHand?.players) ? parsedHand.players.length : null;
+    onImportStateChange?.({ hasInput, heroPosition, numPlayers });
+  }, [rawText, parsedHand, onImportStateChange]);
 
   const handleParse = () => {
     setImportError('');
