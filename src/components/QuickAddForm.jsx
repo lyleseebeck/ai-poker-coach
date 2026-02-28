@@ -125,6 +125,7 @@ export function QuickAddForm({
                   ))}
                 </select>
               </div>
+              <p className="text-sm text-slate-600">Your position (hero)</p>
               <div className="flex flex-wrap gap-2">
                 {positions.map(({ value, label }) => (
                   <button
