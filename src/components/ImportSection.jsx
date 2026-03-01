@@ -44,6 +44,7 @@ function inferOutcomeFromWinLoss(parsedHand) {
 
 export function ImportSection({
   onHandsChange,
+  onHandSelectionReset,
   onImportStateChange,
   heroCard1,
   heroCard2,
@@ -145,6 +146,7 @@ export function ImportSection({
     hands.push(hand);
     saveHands(hands);
     onHandsChange();
+    onHandSelectionReset?.();
     setParsedHand(null);
     setRawText('');
   };

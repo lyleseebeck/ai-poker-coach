@@ -116,6 +116,20 @@ export function App() {
     setImportedOutcome(hasInput ? state?.outcome ?? '' : '');
   }, []);
 
+  const resetHandSelection = useCallback(() => {
+    setHeroCard1('');
+    setHeroCard2('');
+    setNoFlop(false);
+    setFlop1('');
+    setFlop2('');
+    setFlop3('');
+    setTurn('');
+    setRiver('');
+    setCardPickerTargetId(null);
+    setCardPickerRank(null);
+    setCardPickerError('');
+  }, []);
+
   const effectiveNumPlayers = importHasInput ? importedNumPlayers : numPlayers;
   const effectiveHeroPosition = importHasInput ? importedHeroPosition : heroPosition;
 
@@ -175,6 +189,7 @@ export function App() {
 
       <ImportSection
         onHandsChange={refreshHands}
+        onHandSelectionReset={resetHandSelection}
         onImportStateChange={handleImportStateChange}
         heroCard1={heroCard1}
         heroCard2={heroCard2}
@@ -188,6 +203,7 @@ export function App() {
 
       <QuickAddForm
         onHandsChange={refreshHands}
+        onHandSelectionReset={resetHandSelection}
         heroCard1={heroCard1}
         heroCard2={heroCard2}
         heroPosition={effectiveHeroPosition}
