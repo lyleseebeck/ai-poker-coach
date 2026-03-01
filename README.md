@@ -32,6 +32,41 @@ A React web app to log and review your poker hands. Everything runs in your brow
 - **Tailwind CSS** – styling
 - **localStorage** – persistence (same key `pokerHands` as before, so existing data is compatible)
 
+### Local API contract
+
+During local development (`npm run dev`), the app exposes:
+
+- `POST /api/hand-normalize`
+
+Request body (JSON):
+
+```json
+{
+  "manualActionText": "free-form hand narrative",
+  "context": {
+    "heroPosition": "BB",
+    "boardCards": ["Ah", "Kd", "Tc"],
+    "stakes": { "sb": 0.1, "bb": 0.25 },
+    "currentFields": {}
+  },
+  "deterministicParse": {}
+}
+```
+
+Response body (JSON):
+
+```json
+{
+  "parsedFields": {},
+  "confidenceByField": {},
+  "evidenceSnippets": {},
+  "missingRequired": [],
+  "needsUserInput": [],
+  "overallConfidence": 0.82,
+  "model": "local-contract-v1"
+}
+```
+
 ---
 
 ## Project structure

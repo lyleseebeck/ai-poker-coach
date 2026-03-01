@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getHands, saveHands } from '../lib/storage.js';
 import { normalizeCard } from '../lib/cards.js';
 import { PLAYER_COUNTS, POSITIONS_BY_PLAYERS } from '../lib/positions.js';
-import { buildHandRecordV2, createEmptyHandDraft } from '../lib/handSchema.js';
+import { buildHandRecordV2, createEmptyHandDraft, validateHandDraft } from '../lib/handSchema.js';
 import { parseManualActionText } from '../lib/manualActionParser.js';
 import { parseIgnitionHandHistory } from '../lib/ignitionParser.js';
+import { normalizeHandFromText } from '../lib/aiNormalizeClient.js';
 import { CardLogo } from './CardLogo.jsx';
 
 const ACTION_OPTIONS = [
@@ -16,6 +17,8 @@ const ACTION_OPTIONS = [
   { value: 'raise', label: 'Raise' },
   { value: 'all_in', label: 'All-in' },
 ];
+
+const AI_FALLBACK_CONFIDENCE_THRESHOLD = 0.75;
 
 function numberOrNull(value) {
   if (value == null || value === '') return null;
@@ -203,6 +206,40 @@ function formatFieldKey(key) {
     .trim();
 }
 
+function manualTextSignature(value) {
+  return String(value || '').trim();
+}
+
+function shouldRequestAiFallback(parsed) {
+  if (!parsed) return false;
+  const missing = Array.isArray(parsed.missingRequired) ? parsed.missingRequired.length : 0;
+  const overallConfidence = Number(parsed.confidence?.overall ?? 0);
+  return missing > 0 || overallConfidence < AI_FALLBACK_CONFIDENCE_THRESHOLD;
+}
+
+function summarizeAiProposal(proposal) {
+  const fields = proposal?.parsedFields || {};
+  const summary = [];
+
+  const position = fields?.hero?.position;
+  if (position) summary.push(`Hero position: ${position}`);
+
+  const streetSummary = fields?.heroStreetSummary || {};
+  for (const street of ['preflop', 'flop', 'turn', 'river']) {
+    const action = streetSummary?.[street]?.action;
+    if (action && action !== 'none') {
+      summary.push(`${street}: ${action}`);
+    }
+  }
+
+  const netBb = fields?.result?.netBb;
+  if (netBb != null) summary.push(`Net BB: ${netBb}`);
+  const netChips = fields?.result?.netChips;
+  if (netChips != null) summary.push(`Net $: ${netChips}`);
+
+  return summary;
+}
+
 function mergeParsedIntoState(current, parsed, fillOnlyMissing) {
   if (!parsed) return current;
 
@@ -338,6 +375,11 @@ export function UnifiedHandForm({
   const [importPreview, setImportPreview] = useState(null);
   const [parsedImport, setParsedImport] = useState(null);
   const [parsedImportSnapshot, setParsedImportSnapshot] = useState('');
+  const [aiStatus, setAiStatus] = useState('idle');
+  const [aiError, setAiError] = useState('');
+  const [aiProposal, setAiProposal] = useState(null);
+  const [aiProposalSignature, setAiProposalSignature] = useState('');
+  const [aiConfirmedSignature, setAiConfirmedSignature] = useState('');
 
   const positions = POSITIONS_BY_PLAYERS[numPlayers] || [];
   const boardCards = useMemo(() => {
@@ -348,6 +390,25 @@ export function UnifiedHandForm({
   const showFlop = !noFlop;
   const showTurn = !noFlop && boardCards.length >= 4;
   const showRiver = !noFlop && boardCards.length >= 5;
+
+  useEffect(() => {
+    const signature = manualTextSignature(manualActionText);
+    if (!signature) {
+      setAiStatus('idle');
+      setAiError('');
+      setAiProposal(null);
+      setAiProposalSignature('');
+      setAiConfirmedSignature('');
+      return;
+    }
+    if (aiProposalSignature && aiProposalSignature !== signature) {
+      setAiStatus('idle');
+      setAiError('');
+      setAiProposal(null);
+      setAiProposalSignature('');
+      setAiConfirmedSignature('');
+    }
+  }, [manualActionText, aiProposalSignature]);
 
   const setFromMergedState = (next) => {
     setPreflopAction(next.preflopAction);
@@ -421,12 +482,103 @@ export function UnifiedHandForm({
     return { parsed, merged, inferredHeroPosition };
   };
 
+  const applyParsedFieldsToForm = (parsedFields, fillOnlyMissing = true) => {
+    if (!parsedFields) return;
+    const parsedLike = { parsedFields };
+    const merged = mergeParsedIntoState(getCurrentState(), parsedLike, fillOnlyMissing);
+    setFromMergedState(merged);
+
+    const inferredHeroPosition = String(parsedFields?.hero?.position || '').trim().toUpperCase();
+    if (inferredHeroPosition) {
+      if (!fillOnlyMissing || !heroPosition) {
+        setHeroPosition(inferredHeroPosition);
+      }
+    }
+
+    if (typeof parsedFields?.board?.didReachFlop === 'boolean') {
+      setNoFlop(!parsedFields.board.didReachFlop);
+    }
+  };
+
+  const requestAiProposal = async (manualParseResult) => {
+    const signature = manualTextSignature(manualActionText);
+    if (!signature) return null;
+
+    if (aiProposal && aiProposalSignature === signature && aiStatus === 'proposed') {
+      return aiProposal;
+    }
+
+    setAiStatus('loading');
+    setAiError('');
+    try {
+      const payload = {
+        manualActionText: signature,
+        context: {
+          heroPosition: heroPosition || null,
+          numPlayers: numberOrNull(numPlayers),
+          boardCards,
+          didReachFlop: !noFlop,
+          stakes: {
+            sb: numberOrNull(sbSize),
+            bb: numberOrNull(bbSize),
+          },
+          currentFields: getCurrentState(),
+        },
+        deterministicParse: manualParseResult || null,
+      };
+
+      const proposal = await normalizeHandFromText(payload);
+      setAiProposal(proposal);
+      setAiProposalSignature(signature);
+      setAiStatus('proposed');
+      setAiError('');
+      return proposal;
+    } catch (error) {
+      setAiStatus('error');
+      setAiProposal(null);
+      setAiProposalSignature(signature);
+      setAiError(error?.message || 'AI assistant failed to return suggestions.');
+      return null;
+    }
+  };
+
+  const handleApplyAiProposal = () => {
+    if (!aiProposal) return;
+    applyParsedFieldsToForm(aiProposal.parsedFields, true);
+    setAiConfirmedSignature(aiProposalSignature || manualTextSignature(manualActionText));
+    setAiStatus('confirmed');
+    setAiError('');
+  };
+
+  const handleDismissAiProposal = () => {
+    setAiStatus('idle');
+    setAiProposal(null);
+    setAiError('');
+    setAiConfirmedSignature('');
+  };
+
   const handlePlayersChange = (value) => {
     const next = Number(value);
     setNumPlayers(next);
     const validPositions = POSITIONS_BY_PLAYERS[next] || [];
     const stillValid = validPositions.some((p) => p.value === heroPosition);
     if (!stillValid) setHeroPosition('');
+  };
+
+  const handleParseManualText = async () => {
+    const parseResult = runManualParser(true);
+    if (!parseResult?.parsed) return;
+
+    if (shouldRequestAiFallback(parseResult.parsed)) {
+      await requestAiProposal(parseResult.parsed);
+      return;
+    }
+
+    setAiStatus('idle');
+    setAiError('');
+    setAiProposal(null);
+    setAiProposalSignature('');
+    setAiConfirmedSignature('');
   };
 
   const parseImportAndApply = ({ silent = false } = {}) => {
@@ -550,7 +702,7 @@ export function UnifiedHandForm({
     }
   };
 
-  const handleSave = (e) => {
+  const handleSave = async (e) => {
     e.preventDefault();
     setFormErrors({});
     setImportError('');
@@ -598,13 +750,14 @@ export function UnifiedHandForm({
       );
     }
 
+    let manualParseResult = null;
     if (manualActionText.trim()) {
-      const parseResult = runManualParser(true);
-      if (parseResult?.merged) {
-        mergedState = parseResult.merged;
+      manualParseResult = runManualParser(true);
+      if (manualParseResult?.merged) {
+        mergedState = manualParseResult.merged;
       }
-      if (parseResult?.inferredHeroPosition) {
-        effectiveHeroPosition = parseResult.inferredHeroPosition;
+      if (manualParseResult?.inferredHeroPosition) {
+        effectiveHeroPosition = manualParseResult.inferredHeroPosition;
       }
     }
 
@@ -662,6 +815,33 @@ export function UnifiedHandForm({
       manualActionText: manualActionText.trim() ? 'manual' : 'manual',
     };
 
+    const validation = validateHandDraft(draft, { requireBb: true });
+    const currentManualSignature = manualTextSignature(manualActionText);
+    const shouldTryAiFallback =
+      !activeImport &&
+      Boolean(currentManualSignature) &&
+      Boolean(manualParseResult?.parsed) &&
+      shouldRequestAiFallback(manualParseResult.parsed);
+    const aiAlreadyConfirmed =
+      Boolean(currentManualSignature) &&
+      currentManualSignature === aiConfirmedSignature;
+
+    if (!validation.isValid && shouldTryAiFallback && !aiAlreadyConfirmed) {
+      const proposal = await requestAiProposal(manualParseResult.parsed);
+      setFormErrors({
+        ...validation.errors,
+        aiReview: proposal
+          ? 'AI suggestions are ready. Review and apply them, or continue filling fields manually.'
+          : 'AI suggestions could not be loaded. Fill required fields manually and try saving again.',
+      });
+      return;
+    }
+
+    if (!validation.isValid) {
+      setFormErrors(validation.errors);
+      return;
+    }
+
     try {
       const hand = buildHandRecordV2(draft, { requireBb: true });
       const hands = getHands();
@@ -696,6 +876,11 @@ export function UnifiedHandForm({
       setParsedImport(null);
       setParsedImportSnapshot('');
       setImportError('');
+      setAiStatus('idle');
+      setAiError('');
+      setAiProposal(null);
+      setAiProposalSignature('');
+      setAiConfirmedSignature('');
     } catch (error) {
       setFormErrors(error?.validation?.errors || { form: error.message || 'Unable to save hand.' });
     }
@@ -904,7 +1089,7 @@ export function UnifiedHandForm({
           <div className="mt-2 flex items-center gap-2">
             <button
               type="button"
-              onClick={() => runManualParser(true)}
+              onClick={handleParseManualText}
               className="px-3 py-2 rounded-lg bg-slate-200 text-slate-700 text-sm font-medium hover:bg-slate-300 transition"
             >
               Parse & preview text
@@ -922,6 +1107,46 @@ export function UnifiedHandForm({
             <p className="text-xs text-amber-600 mt-1">
               Missing from text: {parsePreview.missingRequired.join(', ')}
             </p>
+          )}
+          {aiStatus === 'loading' && (
+            <p className="text-xs text-slate-500 mt-1">Asking AI to fill missing details...</p>
+          )}
+          {aiError && (
+            <p className="text-xs text-red-600 mt-1">{aiError}</p>
+          )}
+          {aiStatus === 'proposed' && aiProposal && (
+            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+              <p className="text-xs font-medium text-amber-800">AI suggestions ready</p>
+              <p className="text-xs text-amber-700 mt-1">
+                Review and apply before save if you want these inferred values.
+              </p>
+              {summarizeAiProposal(aiProposal).length > 0 && (
+                <ul className="mt-1 text-xs text-amber-800 list-disc list-inside">
+                  {summarizeAiProposal(aiProposal).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              )}
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleApplyAiProposal}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition"
+                >
+                  Apply AI suggestions
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDismissAiProposal}
+                  className="px-3 py-1.5 rounded-lg bg-slate-200 text-slate-700 text-xs font-medium hover:bg-slate-300 transition"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+          {aiStatus === 'confirmed' && (
+            <p className="text-xs text-emerald-700 mt-1">AI suggestions applied. You can still edit fields before saving.</p>
           )}
         </div>
 
