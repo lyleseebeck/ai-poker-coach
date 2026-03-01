@@ -22,17 +22,32 @@ export function HandCard({ hand, onDelete }) {
   const sourceLabel = hand.source?.mode === 'ignition_import' ? 'Imported' : 'Manual';
   const tableInfo = hand.table?.tableName || hand.table?.gameType || null;
   const stakes =
-    hand.table?.stakes?.sb != null && hand.table?.stakes?.bb != null
-      ? `${hand.table.stakes.sb}/${hand.table.stakes.bb}`
+    hand.table?.stakes?.bb != null
+      ? hand.table?.stakes?.sb != null
+        ? `${hand.table.stakes.sb}/${hand.table.stakes.bb}`
+        : `BB ${hand.table.stakes.bb}`
       : null;
   const timelineActions = Array.isArray(hand.timeline?.actions) ? hand.timeline.actions : [];
 
   const streetParts = [];
   const summary = hand.heroStreetSummary || {};
-  if (summary.preflop?.action && summary.preflop.action !== 'none') streetParts.push(`PF: ${summary.preflop.action}`);
-  if (summary.flop?.action && summary.flop.action !== 'none') streetParts.push(`F: ${summary.flop.action}`);
-  if (summary.turn?.action && summary.turn.action !== 'none') streetParts.push(`T: ${summary.turn.action}`);
-  if (summary.river?.action && summary.river.action !== 'none') streetParts.push(`R: ${summary.river.action}`);
+  const formatStreet = (shortLabel, decision) => {
+    if (!decision?.action || decision.action === 'none') return null;
+    const amountBb = typeof decision.amountBb === 'number' ? `${decision.amountBb.toFixed(1)}bb` : null;
+    const amountChips = typeof decision.amountChips === 'number' ? `$${decision.amountChips.toFixed(2)}` : null;
+    if (amountBb && amountChips) return `${shortLabel}: ${decision.action} ${amountBb} (${amountChips})`;
+    if (amountBb) return `${shortLabel}: ${decision.action} ${amountBb}`;
+    if (amountChips) return `${shortLabel}: ${decision.action} (${amountChips})`;
+    return `${shortLabel}: ${decision.action}`;
+  };
+  const pf = formatStreet('PF', summary.preflop);
+  const f = formatStreet('F', summary.flop);
+  const t = formatStreet('T', summary.turn);
+  const r = formatStreet('R', summary.river);
+  if (pf) streetParts.push(pf);
+  if (f) streetParts.push(f);
+  if (t) streetParts.push(t);
+  if (r) streetParts.push(r);
 
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50/50 overflow-hidden">

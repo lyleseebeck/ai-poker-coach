@@ -75,6 +75,17 @@ export function App() {
     else if (slotId === 'import-river') setRiver(card);
   }, []);
 
+  const clearCardBySlotId = useCallback(
+    (slotId) => {
+      setCardBySlotId(slotId, '');
+      if (cardPickerTargetId === slotId) {
+        setCardPickerTargetId(null);
+      }
+      setCardPickerError('');
+    },
+    [setCardBySlotId, cardPickerTargetId]
+  );
+
   const onApplyCard = useCallback(
     (card) => {
       const targetId = effectiveTargetId;
@@ -134,30 +145,34 @@ export function App() {
         <h2 className="text-lg font-medium text-slate-700 mb-2">Your hand (hero)</h2>
         <p className="text-slate-500 text-sm mb-3">Click a card then use the picker above, or pick rank/suit to fill the first empty slot.</p>
         <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={() => registerCardPickerTarget('hero-card1')}
-            className={
-              'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 ' +
-              (effectiveTargetId === 'hero-card1' ? 'border-emerald-500 bg-emerald-50/50' : 'border-transparent')
-            }
-            aria-label="Select card 1"
-          >
-            <CardLogo value={heroCard1} />
-            <span className="text-xs text-slate-400">Card 1</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => registerCardPickerTarget('hero-card2')}
-            className={
-              'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 ' +
-              (effectiveTargetId === 'hero-card2' ? 'border-emerald-500 bg-emerald-50/50' : 'border-transparent')
-            }
-            aria-label="Select card 2"
-          >
-            <CardLogo value={heroCard2} />
-            <span className="text-xs text-slate-400">Card 2</span>
-          </button>
+          {[
+            { id: 'hero-card1', label: 'Card 1', value: heroCard1 },
+            { id: 'hero-card2', label: 'Card 2', value: heroCard2 },
+          ].map((slot) => (
+            <div key={slot.id} className="flex flex-col items-center gap-1">
+              <button
+                type="button"
+                onClick={() => registerCardPickerTarget(slot.id)}
+                className={
+                  'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 ' +
+                  (effectiveTargetId === slot.id ? 'border-emerald-500 bg-emerald-50/50' : 'border-transparent')
+                }
+                aria-label={`Select ${slot.label}`}
+              >
+                <CardLogo value={slot.value} />
+                <span className="text-xs text-slate-400">{slot.label}</span>
+              </button>
+              {slot.value && (
+                <button
+                  type="button"
+                  onClick={() => clearCardBySlotId(slot.id)}
+                  className="text-xs text-slate-400 hover:text-red-600 transition"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          ))}
         </div>
       </section>
 
@@ -170,6 +185,7 @@ export function App() {
         turn={turn}
         river={river}
         registerCardPickerTarget={registerCardPickerTarget}
+        clearCardBySlotId={clearCardBySlotId}
         activeCardTargetId={effectiveTargetId}
       />
 
