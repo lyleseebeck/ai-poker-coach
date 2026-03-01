@@ -3,10 +3,9 @@ import { getHands } from './lib/storage.js';
 import { normalizeCard } from './lib/cards.js';
 import { CardPicker } from './components/CardPicker.jsx';
 import { CardLogo } from './components/CardLogo.jsx';
-import { ImportSection } from './components/ImportSection.jsx';
-import { QuickAddForm } from './components/QuickAddForm.jsx';
 import { HandList } from './components/HandList.jsx';
 import { HandDetailsForm } from './components/HandDetailsForm.jsx';
+import { UnifiedHandForm } from './components/UnifiedHandForm.jsx';
 
 const HERO_SLOT_IDS = ['hero-card1', 'hero-card2'];
 const COMMUNITY_SLOT_IDS = ['import-flop1', 'import-flop2', 'import-flop3', 'import-turn', 'import-river'];
@@ -24,8 +23,6 @@ export function App() {
   const [hands, setHands] = useState(() => getHands());
   const [heroCard1, setHeroCard1] = useState('');
   const [heroCard2, setHeroCard2] = useState('');
-  const [numPlayers, setNumPlayers] = useState(8);
-  const [heroPosition, setHeroPosition] = useState('');
   const [noFlop, setNoFlop] = useState(false);
   const [flop1, setFlop1] = useState('');
   const [flop2, setFlop2] = useState('');
@@ -35,11 +32,6 @@ export function App() {
   const [cardPickerTargetId, setCardPickerTargetId] = useState(null);
   const [cardPickerRank, setCardPickerRank] = useState(null);
   const [cardPickerError, setCardPickerError] = useState('');
-  const [importHasInput, setImportHasInput] = useState(false);
-  const [importedNumPlayers, setImportedNumPlayers] = useState(null);
-  const [importedHeroPosition, setImportedHeroPosition] = useState('');
-  const [importedAction, setImportedAction] = useState('');
-  const [importedOutcome, setImportedOutcome] = useState('');
 
   const refreshHands = useCallback(() => {
     setHands(getHands());
@@ -107,15 +99,6 @@ export function App() {
     [effectiveTargetId, noFlop, cardValuesById, setCardBySlotId]
   );
 
-  const handleImportStateChange = useCallback((state) => {
-    const hasInput = Boolean(state?.hasInput);
-    setImportHasInput(hasInput);
-    setImportedNumPlayers(hasInput ? state?.numPlayers ?? null : null);
-    setImportedHeroPosition(hasInput ? state?.heroPosition ?? '' : '');
-    setImportedAction(hasInput ? state?.action ?? '' : '');
-    setImportedOutcome(hasInput ? state?.outcome ?? '' : '');
-  }, []);
-
   const resetHandSelection = useCallback(() => {
     setHeroCard1('');
     setHeroCard2('');
@@ -129,9 +112,6 @@ export function App() {
     setCardPickerRank(null);
     setCardPickerError('');
   }, []);
-
-  const effectiveNumPlayers = importHasInput ? importedNumPlayers : numPlayers;
-  const effectiveHeroPosition = importHasInput ? importedHeroPosition : heroPosition;
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
@@ -193,10 +173,9 @@ export function App() {
         activeCardTargetId={effectiveTargetId}
       />
 
-      <ImportSection
+      <UnifiedHandForm
         onHandsChange={refreshHands}
         onHandSelectionReset={resetHandSelection}
-        onImportStateChange={handleImportStateChange}
         heroCard1={heroCard1}
         heroCard2={heroCard2}
         noFlop={noFlop}
@@ -205,21 +184,6 @@ export function App() {
         flop3={flop3}
         turn={turn}
         river={river}
-      />
-
-      <QuickAddForm
-        onHandsChange={refreshHands}
-        onHandSelectionReset={resetHandSelection}
-        heroCard1={heroCard1}
-        heroCard2={heroCard2}
-        heroPosition={effectiveHeroPosition}
-        setHeroPosition={setHeroPosition}
-        numPlayers={effectiveNumPlayers}
-        setNumPlayers={setNumPlayers}
-        positionLocked={importHasInput}
-        hasParsedImportData={Boolean(importedNumPlayers !== null || importedHeroPosition)}
-        importedAction={importedAction}
-        importedOutcome={importedOutcome}
       />
 
       <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
