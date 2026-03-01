@@ -23,6 +23,11 @@ A React web app to log and review your poker hands. Everything runs in your brow
    ```
    Then serve the `dist` folder (e.g. with `npm run preview` or any static file server).
 
+4. **Run unit tests**:
+   ```bash
+   npm test
+   ```
+
 ---
 
 ## Tech stack
@@ -30,7 +35,7 @@ A React web app to log and review your poker hands. Everything runs in your brow
 - **React 18** – UI components and state
 - **Vite** – build tool and dev server
 - **Tailwind CSS** – styling
-- **localStorage** – persistence (same key `pokerHands` as before, so existing data is compatible)
+- **localStorage** – persistence (V2 records only; legacy records are ignored)
 
 ### Local API contract
 
@@ -73,20 +78,26 @@ Response body (JSON):
 
 ```
 src/
-  App.jsx           – main app, state, card picker registration
+  App.jsx           – main app, shared card state, picker targeting
   main.jsx          – React entry point
   index.css         – Tailwind + global styles
   lib/
-    storage.js      – getHands, saveHands, generateId
+    handSchema.js   – canonical V2 draft/validation/build utilities
+    manualActionParser.js – deterministic parser + confidence/missing fields
+    aiNormalizeClient.js – frontend adapter for /api/hand-normalize
+    storage.js      – V2-only getHands/saveHands
     ignitionParser.js – Ignition hand history parser
   components/
     CardPicker.jsx  – rank + suit point-and-click picker
-    CardInput.jsx   – card field that uses the picker when focused
-    HandDetailsForm.jsx – my cards, “hand didn’t reach flop”, community cards
-    ImportSection.jsx   – paste Ignition text, parse, preview, hand details, save
-    QuickAddForm.jsx    – quick add hand form
+    HandDetailsForm.jsx – community card controls and no-flop toggle
+    UnifiedHandForm.jsx – single hand capture flow (manual + import + AI proposal)
     HandList.jsx    – list of saved hands
-    HandCard.jsx    – single hand (imported with actions or simple)
+    HandCard.jsx    – V2 saved-hand renderer with street/detail summary
+    TrashList.jsx   – deleted hands retained for 30-day trash window
+tests/
+  *.test.js         – schema/parser/storage unit tests (Node test runner)
+docs/
+  manual-qa-checklist.md – step-by-step UI smoke checklist
 ```
 
-The app keeps the same behavior as the original: import hand history (with required my cards and community cards or “hand didn’t reach flop”), quick-add form, saved hands list with expandable actions, and card picker for all card fields.
+Current UX is a unified "Hand capture" flow with one save button, optional import parse/prefill, optional manual action narrative parsing, saved-hand cards rendered from the canonical V2 schema, and soft-delete to 30-day trash.

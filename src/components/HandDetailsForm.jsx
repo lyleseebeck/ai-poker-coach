@@ -9,6 +9,7 @@ export function HandDetailsForm({
   turn,
   river,
   registerCardPickerTarget,
+  clearCardBySlotId,
   activeCardTargetId,
 }) {
   const communitySlots = [
@@ -45,19 +46,29 @@ export function HandDetailsForm({
             <p className="text-xs text-slate-500">Click a slot, then choose rank and suit in the picker above.</p>
             <div className="flex flex-wrap gap-3">
               {communitySlots.map(({ id, label, value }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => handleSelectSlot(id)}
-                  className={
-                    'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 ' +
-                    (activeCardTargetId === id ? 'border-emerald-500 bg-emerald-50/50' : 'border-transparent')
-                  }
-                  aria-label={`Select ${label}`}
-                >
-                  <CardLogo value={value} />
-                  <span className="text-xs text-slate-500">{label}</span>
-                </button>
+                <div key={id} className="flex flex-col items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectSlot(id)}
+                    className={
+                      'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus-visible:border-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-1 ' +
+                      (activeCardTargetId === id ? 'border-emerald-500 bg-emerald-50/50' : 'border-transparent')
+                    }
+                    aria-label={`Select ${label}`}
+                  >
+                    <CardLogo value={value} />
+                    <span className="text-xs text-slate-500">{label}</span>
+                  </button>
+                  {value && (
+                    <button
+                      type="button"
+                      onClick={() => clearCardBySlotId?.(id)}
+                      className="text-xs text-slate-400 hover:text-red-600 transition"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
             <p className="text-xs text-slate-400">For imported hands, at least the 3 flop cards are required unless pre-flop.</p>

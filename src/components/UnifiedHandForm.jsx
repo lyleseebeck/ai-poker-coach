@@ -90,6 +90,37 @@ function inferImportNetChips(parsed, heroPosition) {
   return null;
 }
 
+function expectedBoardCardsFromTimeline(timeline) {
+  if (!Array.isArray(timeline) || timeline.length === 0) return 0;
+  let max = 0;
+  for (const row of timeline) {
+    if (row.street === 'river') return 5;
+    if (row.street === 'turn') max = Math.max(max, 4);
+    else if (row.street === 'flop') max = Math.max(max, 3);
+  }
+  return max;
+}
+
+function streetLabelForBoardCount(count) {
+  if (count >= 5) return 'river';
+  if (count >= 4) return 'turn';
+  if (count >= 3) return 'flop';
+  return 'preflop';
+}
+
+function importBoardRequirementMessage(expectedCount) {
+  if (expectedCount >= 5) {
+    return 'Imported hand reached river. Enter exactly 5 community cards (flop, turn, river).';
+  }
+  if (expectedCount >= 4) {
+    return 'Imported hand reached turn. Enter exactly 4 community cards (flop + turn).';
+  }
+  if (expectedCount >= 3) {
+    return 'Imported hand reached flop. Enter exactly 3 community cards.';
+  }
+  return "Imported hand ended preflop. Enable 'Hand didn't reach flop' and clear community cards.";
+}
+
 function mapActionType(actionText) {
   const text = String(actionText || '').toLowerCase();
   if (!text) return 'none';
@@ -610,10 +641,13 @@ export function UnifiedHandForm({
         effectiveBb
       );
       const timeline = mapImportTimeline(parsed.actions || [], inferredHeroPosition || heroPosition);
-      const didReachFlopFromTimeline = timeline.some(
-        (row) => row.street === 'flop' || row.street === 'turn' || row.street === 'river'
-      );
       const boardFromImport = (parsed.communityCards || []).map((card) => normalizeCard(card)).filter(Boolean);
+      const hasImportedBoardCards = boardFromImport.length > 0;
+      const expectedBoardCards = Math.max(
+        boardFromImport.length,
+        expectedBoardCardsFromTimeline(timeline)
+      );
+      const reachedStreet = streetLabelForBoardCount(expectedBoardCards);
       const heroCardsFromImport = (me?.cards || []).map((card) => normalizeCard(card)).filter(Boolean);
       const netChipsValue = inferImportNetChips(parsed, inferredHeroPosition || heroPosition);
       const netBbValue = netChipsValue != null && effectiveBb != null ? netChipsValue / effectiveBb : null;
@@ -643,12 +677,18 @@ export function UnifiedHandForm({
         setNetBb(String(netBbValue));
       }
 
-      setNoFlop(boardFromImport.length < 3 && !didReachFlopFromTimeline);
-      setFlop1(boardFromImport[0] || '');
-      setFlop2(boardFromImport[1] || '');
-      setFlop3(boardFromImport[2] || '');
-      setTurn(boardFromImport[3] || '');
-      setRiver(boardFromImport[4] || '');
+      if (hasImportedBoardCards) {
+        setNoFlop(false);
+        setFlop1(boardFromImport[0] || '');
+        setFlop2(boardFromImport[1] || '');
+        setFlop3(boardFromImport[2] || '');
+        setTurn(boardFromImport[3] || '');
+        setRiver(boardFromImport[4] || '');
+      } else if (expectedBoardCards === 0 && boardCards.length === 0) {
+        setNoFlop(true);
+      } else if (expectedBoardCards >= 3) {
+        setNoFlop(false);
+      }
 
       if (heroCardsFromImport.length >= 2) {
         setHeroCard1(heroCardsFromImport[0]);
@@ -664,7 +704,9 @@ export function UnifiedHandForm({
           numPlayers: inferredPlayers,
           sb: stakes.sb,
           bb: effectiveBb,
-          didReachFlop: boardFromImport.length >= 3 || didReachFlopFromTimeline,
+          didReachFlop: expectedBoardCards >= 3,
+          expectedBoardCards,
+          reachedStreet,
         },
         prefill: {
           preflopAction: importSummary.preflop.action,
@@ -694,6 +736,8 @@ export function UnifiedHandForm({
         heroPosition: inferredHeroPosition || null,
         numPlayers: inferredPlayers,
         winLoss: netChipsValue,
+        reachedStreet,
+        expectedBoardCards,
       });
       return nextImport;
     } catch (error) {
@@ -744,10 +788,35 @@ export function UnifiedHandForm({
       const importedBoard = (activeImport?.parsed?.communityCards || [])
         .map((card) => normalizeCard(card))
         .filter(Boolean);
-      effectiveBoardCards = importedBoard;
-      effectiveDidReachFlop = Boolean(
-        activeImport?.inferred?.didReachFlop || importedBoard.length >= 3
-      );
+      if (importedBoard.length > 0) {
+        effectiveBoardCards = importedBoard;
+      }
+      const expectedBoardCards = Number(activeImport?.inferred?.expectedBoardCards ?? -1);
+      if (expectedBoardCards === 0) {
+        effectiveDidReachFlop = false;
+      } else if (expectedBoardCards >= 3) {
+        effectiveDidReachFlop = true;
+      } else {
+        effectiveDidReachFlop = Boolean(
+          activeImport?.inferred?.didReachFlop || effectiveBoardCards.length >= 3
+        );
+      }
+    }
+
+    if (activeImport?.inferred) {
+      const expectedBoardCards = Number(activeImport.inferred.expectedBoardCards ?? 0);
+      const actualBoardCards = effectiveDidReachFlop ? effectiveBoardCards.length : 0;
+      const isMismatch =
+        expectedBoardCards === 0
+          ? effectiveDidReachFlop || actualBoardCards > 0
+          : !effectiveDidReachFlop || actualBoardCards !== expectedBoardCards;
+
+      if (isMismatch) {
+        const message = importBoardRequirementMessage(expectedBoardCards);
+        setImportError(message);
+        setFormErrors({ importBoard: message });
+        return;
+      }
     }
 
     let manualParseResult = null;
@@ -932,6 +1001,7 @@ export function UnifiedHandForm({
               {importPreview.tableName ? `Table: ${importPreview.tableName}. ` : ''}
               {importPreview.handId ? `Hand #${importPreview.handId}. ` : ''}
               {importPreview.heroPosition ? `Hero: ${importPreview.heroPosition}. ` : ''}
+              {importPreview.reachedStreet ? `Reached: ${importPreview.reachedStreet}. ` : ''}
               {typeof importPreview.winLoss === 'number' ? `Win/Loss: ${importPreview.winLoss >= 0 ? '+' : ''}${importPreview.winLoss.toFixed(2)}.` : ''}
             </p>
           )}

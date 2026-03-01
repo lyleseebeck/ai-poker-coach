@@ -1,10 +1,18 @@
 import { useState, useCallback, useEffect } from 'react';
-import { getHands } from './lib/storage.js';
+import {
+  getHands,
+  getTrashedHands,
+  moveHandToTrash,
+  permanentlyDeleteHand,
+  restoreHandFromTrash,
+  TRASH_RETENTION_DAYS,
+} from './lib/storage.js';
 import { normalizeCard } from './lib/cards.js';
 import { CardPicker } from './components/CardPicker.jsx';
 import { CardLogo } from './components/CardLogo.jsx';
 import { HandList } from './components/HandList.jsx';
 import { HandDetailsForm } from './components/HandDetailsForm.jsx';
+import { TrashList } from './components/TrashList.jsx';
 import { UnifiedHandForm } from './components/UnifiedHandForm.jsx';
 
 const HERO_SLOT_IDS = ['hero-card1', 'hero-card2'];
@@ -21,6 +29,7 @@ const SLOT_LABELS = {
 
 export function App() {
   const [hands, setHands] = useState(() => getHands());
+  const [trashedHands, setTrashedHands] = useState(() => getTrashedHands());
   const [heroCard1, setHeroCard1] = useState('');
   const [heroCard2, setHeroCard2] = useState('');
   const [noFlop, setNoFlop] = useState(false);
@@ -35,7 +44,41 @@ export function App() {
 
   const refreshHands = useCallback(() => {
     setHands(getHands());
+    setTrashedHands(getTrashedHands());
   }, []);
+
+  const handleDeleteHand = useCallback(
+    (id) => {
+      if (!id) return;
+      const ok = window.confirm(
+        `Move this hand to trash? It will be permanently deleted after ${TRASH_RETENTION_DAYS} days.`
+      );
+      if (!ok) return;
+      moveHandToTrash(id);
+      refreshHands();
+    },
+    [refreshHands]
+  );
+
+  const handleRestoreHand = useCallback(
+    (id) => {
+      if (!id) return;
+      restoreHandFromTrash(id);
+      refreshHands();
+    },
+    [refreshHands]
+  );
+
+  const handleDeleteNow = useCallback(
+    (id) => {
+      if (!id) return;
+      const ok = window.confirm('Permanently delete this trashed hand now? This cannot be undone.');
+      if (!ok) return;
+      permanentlyDeleteHand(id);
+      refreshHands();
+    },
+    [refreshHands]
+  );
 
   const registerCardPickerTarget = useCallback((id) => {
     setCardPickerTargetId(id);
@@ -75,6 +118,17 @@ export function App() {
     else if (slotId === 'import-river') setRiver(card);
   }, []);
 
+  const clearCardBySlotId = useCallback(
+    (slotId) => {
+      setCardBySlotId(slotId, '');
+      if (cardPickerTargetId === slotId) {
+        setCardPickerTargetId(null);
+      }
+      setCardPickerError('');
+    },
+    [setCardBySlotId, cardPickerTargetId]
+  );
+
   const onApplyCard = useCallback(
     (card) => {
       const targetId = effectiveTargetId;
@@ -94,9 +148,25 @@ export function App() {
 
       setCardPickerError('');
       setCardBySlotId(targetId, normalized);
-      setCardPickerTargetId(null);
+      const isExplicitTarget = Boolean(cardPickerTargetId);
+      if (!isExplicitTarget) {
+        setCardPickerTargetId(null);
+        return;
+      }
+
+      const targetIndex = activeSlotIds.indexOf(targetId);
+      let nextTargetId = null;
+      for (let i = targetIndex + 1; i < activeSlotIds.length; i += 1) {
+        const slotId = activeSlotIds[i];
+        if (!normalizeCard(cardValuesById[slotId])) {
+          nextTargetId = slotId;
+          break;
+        }
+      }
+
+      setCardPickerTargetId(nextTargetId);
     },
-    [effectiveTargetId, noFlop, cardValuesById, setCardBySlotId]
+    [effectiveTargetId, noFlop, cardValuesById, setCardBySlotId, cardPickerTargetId]
   );
 
   const resetHandSelection = useCallback(() => {
@@ -134,30 +204,34 @@ export function App() {
         <h2 className="text-lg font-medium text-slate-700 mb-2">Your hand (hero)</h2>
         <p className="text-slate-500 text-sm mb-3">Click a card then use the picker above, or pick rank/suit to fill the first empty slot.</p>
         <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={() => registerCardPickerTarget('hero-card1')}
-            className={
-              'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 ' +
-              (effectiveTargetId === 'hero-card1' ? 'border-emerald-500 bg-emerald-50/50' : 'border-transparent')
-            }
-            aria-label="Select card 1"
-          >
-            <CardLogo value={heroCard1} />
-            <span className="text-xs text-slate-400">Card 1</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => registerCardPickerTarget('hero-card2')}
-            className={
-              'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 ' +
-              (effectiveTargetId === 'hero-card2' ? 'border-emerald-500 bg-emerald-50/50' : 'border-transparent')
-            }
-            aria-label="Select card 2"
-          >
-            <CardLogo value={heroCard2} />
-            <span className="text-xs text-slate-400">Card 2</span>
-          </button>
+          {[
+            { id: 'hero-card1', label: 'Card 1', value: heroCard1 },
+            { id: 'hero-card2', label: 'Card 2', value: heroCard2 },
+          ].map((slot) => (
+            <div key={slot.id} className="flex flex-col items-center gap-1">
+              <button
+                type="button"
+                onClick={() => registerCardPickerTarget(slot.id)}
+                className={
+                  'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus-visible:border-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-1 ' +
+                  (effectiveTargetId === slot.id ? 'border-emerald-500 bg-emerald-50/50' : 'border-transparent')
+                }
+                aria-label={`Select ${slot.label}`}
+              >
+                <CardLogo value={slot.value} />
+                <span className="text-xs text-slate-400">{slot.label}</span>
+              </button>
+              {slot.value && (
+                <button
+                  type="button"
+                  onClick={() => clearCardBySlotId(slot.id)}
+                  className="text-xs text-slate-400 hover:text-red-600 transition"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          ))}
         </div>
       </section>
 
@@ -170,6 +244,7 @@ export function App() {
         turn={turn}
         river={river}
         registerCardPickerTarget={registerCardPickerTarget}
+        clearCardBySlotId={clearCardBySlotId}
         activeCardTargetId={effectiveTargetId}
       />
 
@@ -196,7 +271,19 @@ export function App() {
 
       <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
         <h2 className="text-lg font-medium text-slate-700 mb-4">Saved hands</h2>
-        <HandList hands={hands} onHandsChange={refreshHands} />
+        <HandList hands={hands} onDeleteHand={handleDeleteHand} />
+      </section>
+
+      <section className="mt-6 bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+        <h2 className="text-lg font-medium text-slate-700 mb-1">Trash</h2>
+        <p className="text-xs text-slate-500 mb-4">
+          Deleted hands stay here for {TRASH_RETENTION_DAYS} days, then are removed automatically.
+        </p>
+        <TrashList
+          hands={trashedHands}
+          onRestoreHand={handleRestoreHand}
+          onDeleteNow={handleDeleteNow}
+        />
       </section>
     </div>
   );
