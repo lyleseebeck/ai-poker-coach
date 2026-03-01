@@ -170,7 +170,7 @@ export function App() {
                 type="button"
                 onClick={() => registerCardPickerTarget(slot.id)}
                 className={
-                  'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 ' +
+                  'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus-visible:border-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-1 ' +
                   (effectiveTargetId === slot.id ? 'border-emerald-500 bg-emerald-50/50' : 'border-transparent')
                 }
                 aria-label={`Select ${slot.label}`}
