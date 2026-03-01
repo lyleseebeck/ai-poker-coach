@@ -1,4 +1,68 @@
 export function HandCard({ hand, onDelete }) {
+  if (hand.schemaVersion === 2) {
+    const heroCards = hand.hero?.cards?.join(' ') || '';
+    const position = hand.hero?.position || '—';
+    const netBb = hand.result?.netBb;
+    const netBbStr = typeof netBb === 'number' ? `${netBb >= 0 ? '+' : ''}${netBb.toFixed(1)} bb` : '—';
+    const netClass =
+      typeof netBb === 'number'
+        ? netBb > 0
+          ? 'text-emerald-600'
+          : netBb < 0
+            ? 'text-red-600'
+            : 'text-slate-600'
+        : 'text-slate-500';
+    const boardStr =
+      hand.board?.didReachFlop
+        ? hand.board?.cards?.length
+          ? hand.board.cards.join(' ')
+          : '—'
+        : '— (pre-flop)';
+    const sourceLabel = hand.source?.mode === 'ignition_import' ? 'Imported' : 'Manual';
+
+    const streetParts = [];
+    const summary = hand.heroStreetSummary || {};
+    if (summary.preflop?.action && summary.preflop.action !== 'none') streetParts.push(`PF: ${summary.preflop.action}`);
+    if (summary.flop?.action && summary.flop.action !== 'none') streetParts.push(`F: ${summary.flop.action}`);
+    if (summary.turn?.action && summary.turn.action !== 'none') streetParts.push(`T: ${summary.turn.action}`);
+    if (summary.river?.action && summary.river.action !== 'none') streetParts.push(`R: ${summary.river.action}`);
+
+    return (
+      <div className="rounded-lg border border-slate-200 bg-slate-50/50 overflow-hidden">
+        <div className="flex items-start justify-between gap-3 p-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono font-medium text-slate-800">{heroCards}</span>
+              <span className="text-slate-400">·</span>
+              <span className="text-slate-600 text-sm">{position}</span>
+              <span className="text-slate-400">·</span>
+              <span className={`text-sm font-medium ${netClass}`}>{netBbStr}</span>
+              <span className="text-slate-400">·</span>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">{sourceLabel}</span>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              Board: <span className="font-mono">{boardStr}</span>
+            </p>
+            {streetParts.length > 0 && (
+              <p className="text-xs text-slate-500 mt-1">
+                {streetParts.join(' · ')}
+              </p>
+            )}
+            {hand.notes && <p className="text-xs text-slate-500 mt-1">{hand.notes}</p>}
+          </div>
+          <button
+            type="button"
+            onClick={() => onDelete(hand.id)}
+            className="shrink-0 text-slate-400 hover:text-red-600 text-sm"
+            title="Delete"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (hand.actions && hand.actions.length > 0) {
     const tableName = hand.tableName || 'Imported hand';
     const handId = hand.handId ? '#' + hand.handId : '';
