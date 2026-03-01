@@ -210,6 +210,7 @@ export function UnifiedHandForm({
 
     const parsed = parseManualActionText(text, {
       boardCardsCount: boardCards.length,
+      heroPosition,
     });
     const merged = mergeParsedIntoState(getCurrentState(), parsed, fillOnlyMissing);
     setFromMergedState(merged);

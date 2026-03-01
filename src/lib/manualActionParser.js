@@ -45,6 +45,23 @@ function splitClauses(rawText) {
     .filter(Boolean);
 }
 
+function normalizePosition(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '');
+}
+
+function inferHeroPosition(rawText, providedPosition) {
+  const fromProvided = normalizePosition(providedPosition);
+  if (fromProvided) return fromProvided;
+
+  const text = String(rawText || '').toLowerCase();
+  if (/\bout of bb\b|\bin the bb\b|\bfrom bb\b|\bbig blind\b/.test(text)) return 'BB';
+  if (/\bout of sb\b|\bin the sb\b|\bfrom sb\b|\bsmall blind\b/.test(text)) return 'SB';
+  return '';
+}
+
 function findStreet(text) {
   for (const street of ['preflop', 'flop', 'turn', 'river']) {
     for (const pattern of STREET_PATTERNS[street]) {
@@ -119,6 +136,39 @@ function parseSignedFromContext(rawAmount, contextText) {
   return rawAmount;
 }
 
+function inferBlindLossNetBb({ currentNetBb, text, heroPosition, preflopAction }) {
+  if (currentNetBb != null) return { value: currentNetBb, confidence: null, snippet: null };
+  if (preflopAction !== 'fold') return { value: null, confidence: null, snippet: null };
+
+  const lower = String(text || '').toLowerCase();
+  const seemsLikeWalk = /\bwalk\b|\bchecked option\b|\bcheck(?:ed)? in bb\b|\beveryone folded to me\b/.test(lower);
+
+  if (heroPosition === 'BB') {
+    if (seemsLikeWalk) {
+      return {
+        value: 0,
+        confidence: 0.6,
+        snippet: 'BB preflop walk/check scenario',
+      };
+    }
+    return {
+      value: -1,
+      confidence: 0.78,
+      snippet: 'Preflop fold from BB (blind posted)',
+    };
+  }
+
+  if (heroPosition === 'SB') {
+    return {
+      value: -0.5,
+      confidence: 0.72,
+      snippet: 'Preflop fold from SB (blind posted)',
+    };
+  }
+
+  return { value: null, confidence: null, snippet: null };
+}
+
 function inferDidReachFlop(rawText) {
   const text = String(rawText || '').toLowerCase();
   if (!text) return { value: null, confidence: 0 };
@@ -184,6 +234,7 @@ export function parseManualActionText(rawText, options = {}) {
   const text = normalizeWhitespace(rawText);
   const didReach = inferDidReachFlop(text);
   const requiredStreets = inferRequiredStreets(options, didReach.value, text);
+  const heroPosition = inferHeroPosition(text, options.heroPosition);
 
   const actionsByStreet = {
     preflop: null,
@@ -230,19 +281,39 @@ export function parseManualActionText(rawText, options = {}) {
   }
 
   const netBbData = parseBbAmount(text);
-  const signedNetBb = parseSignedFromContext(netBbData.value, text);
+  const hasExplicitNetBb = netBbData.value != null;
+  let signedNetBb = parseSignedFromContext(netBbData.value, text);
   const netChipsData = parseChipAmount(text);
   const signedNetChips = parseSignedFromContext(netChipsData.value, text);
 
+  const blindFallback = inferBlindLossNetBb({
+    currentNetBb: signedNetBb,
+    text,
+    heroPosition,
+    preflopAction: actionsByStreet.preflop?.action || 'none',
+  });
+  if (signedNetBb == null && blindFallback.value != null) {
+    signedNetBb = blindFallback.value;
+  }
+
   let netBbConfidence = 0;
   if (signedNetBb != null) {
-    netBbConfidence = /net|result|pnl|won|lost|profit|down|up|bb/.test(text.toLowerCase()) ? 0.95 : 0.7;
+    if (hasExplicitNetBb) {
+      netBbConfidence = /net|result|pnl|won|lost|profit|down|up|bb/.test(text.toLowerCase()) ? 0.95 : 0.7;
+    } else if (blindFallback.confidence != null) {
+      netBbConfidence = blindFallback.confidence;
+    } else {
+      netBbConfidence = 0.65;
+    }
   }
 
   const byField = {
     didReachFlop: toClampedConfidence(didReach.confidence),
     result_netBb: toClampedConfidence(netBbConfidence),
   };
+  if (heroPosition) {
+    byField.heroPosition = 0.9;
+  }
   const evidenceSnippets = {};
   const missingRequired = [];
 
@@ -281,7 +352,7 @@ export function parseManualActionText(rawText, options = {}) {
   if (signedNetBb == null) {
     missingRequired.push('result.netBb');
   } else {
-    evidenceSnippets['result.netBb'] = netBbData.snippet || `${signedNetBb} bb`;
+    evidenceSnippets['result.netBb'] = netBbData.snippet || blindFallback.snippet || `${signedNetBb} bb`;
   }
 
   if (signedNetChips != null) {
@@ -319,6 +390,7 @@ export function parseManualActionText(rawText, options = {}) {
     metadata: {
       parser: 'deterministic-manual-v1',
       requiredStreets,
+      heroPosition: heroPosition || null,
     },
   };
 }
