@@ -21,6 +21,7 @@ const OUTCOMES = [
 
 export function QuickAddForm({
   onHandsChange,
+  onHandSelectionReset,
   heroCard1,
   heroCard2,
   heroPosition,
@@ -76,6 +77,7 @@ export function QuickAddForm({
     hands.push(hand);
     saveHands(hands);
     onHandsChange();
+    onHandSelectionReset?.();
     setAction('');
     setOpponentCards('');
     setOutcome('');
