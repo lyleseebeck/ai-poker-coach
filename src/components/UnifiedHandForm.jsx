@@ -99,13 +99,29 @@ function mapActionType(actionText) {
   return 'none';
 }
 
-function inferStreetFromActionRow(action) {
-  const text = `${action?.action || ''} ${action?.timestamp || ''}`.toLowerCase();
+function streetFromMarker(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (text === 'preflop' || text === 'pre-flop') return 'preflop';
+  if (text === 'flop') return 'flop';
+  if (text === 'turn') return 'turn';
+  if (text === 'river') return 'river';
+  return null;
+}
+
+function detectStreetMarker(action) {
+  return streetFromMarker(action?.position) || streetFromMarker(action?.action);
+}
+
+function inferStreetFromActionRow(action, fallbackStreet = 'unknown') {
+  const marker = detectStreetMarker(action);
+  if (marker) return marker;
+
+  const text = `${action?.position || ''} ${action?.action || ''} ${action?.timestamp || ''}`.toLowerCase();
   if (text.includes('preflop') || text.includes('pre-flop')) return 'preflop';
   if (text.includes('flop')) return 'flop';
   if (text.includes('turn')) return 'turn';
   if (text.includes('river')) return 'river';
-  return 'unknown';
+  return fallbackStreet;
 }
 
 function createImportDecision(actionType, amount, bbSize) {
@@ -130,23 +146,20 @@ function inferHeroStreetSummaryFromImport(actions, heroPosition, bbSize) {
   const heroPos = normalizePosition(heroPosition);
   if (!heroPos || !Array.isArray(actions) || actions.length === 0) return summary;
 
-  const unresolved = [];
+  let currentStreet = 'preflop';
   for (const action of actions) {
+    const markerStreet = detectStreetMarker(action);
+    if (markerStreet) {
+      currentStreet = markerStreet;
+      continue;
+    }
     if (normalizePosition(action?.position) !== heroPos) continue;
     const actionType = mapActionType(action?.action);
     if (actionType === 'none') continue;
     const decision = createImportDecision(actionType, action?.amount, bbSize);
-    const street = inferStreetFromActionRow(action);
-    if (street === 'unknown') {
-      unresolved.push(decision);
-      continue;
-    }
+    const street = inferStreetFromActionRow(action, currentStreet);
+    if (!['preflop', 'flop', 'turn', 'river'].includes(street)) continue;
     summary[street] = decision;
-  }
-
-  const remainingStreets = ['preflop', 'flop', 'turn', 'river'].filter((street) => summary[street].action === 'none');
-  for (let i = 0; i < unresolved.length && i < remainingStreets.length; i += 1) {
-    summary[remainingStreets[i]] = unresolved[i];
   }
 
   return summary;
@@ -155,16 +168,31 @@ function inferHeroStreetSummaryFromImport(actions, heroPosition, bbSize) {
 function mapImportTimeline(actions, heroPosition) {
   const heroPos = normalizePosition(heroPosition);
   if (!Array.isArray(actions)) return [];
-  return actions.map((action, index) => ({
-    seq: index + 1,
-    street: inferStreetFromActionRow(action),
-    position: action?.position || null,
-    actionRaw: action?.action || '',
-    actionNorm: mapActionType(action?.action),
-    amountChips: numberOrNull(action?.amount),
-    timestamp: action?.timestamp || null,
-    isHero: normalizePosition(action?.position) === heroPos,
-  }));
+  let currentStreet = 'preflop';
+  const rows = [];
+  let seq = 1;
+
+  for (const action of actions) {
+    const markerStreet = detectStreetMarker(action);
+    if (markerStreet) {
+      currentStreet = markerStreet;
+      continue;
+    }
+
+    rows.push({
+      seq,
+      street: inferStreetFromActionRow(action, currentStreet),
+      position: action?.position || null,
+      actionRaw: action?.action || '',
+      actionNorm: mapActionType(action?.action),
+      amountChips: numberOrNull(action?.amount),
+      timestamp: action?.timestamp || null,
+      isHero: normalizePosition(action?.position) === heroPos,
+    });
+    seq += 1;
+  }
+
+  return rows;
 }
 
 function formatFieldKey(key) {
@@ -430,6 +458,9 @@ export function UnifiedHandForm({
         effectiveBb
       );
       const timeline = mapImportTimeline(parsed.actions || [], inferredHeroPosition || heroPosition);
+      const didReachFlopFromTimeline = timeline.some(
+        (row) => row.street === 'flop' || row.street === 'turn' || row.street === 'river'
+      );
       const boardFromImport = (parsed.communityCards || []).map((card) => normalizeCard(card)).filter(Boolean);
       const heroCardsFromImport = (me?.cards || []).map((card) => normalizeCard(card)).filter(Boolean);
       const netChipsValue = inferImportNetChips(parsed, inferredHeroPosition || heroPosition);
@@ -460,7 +491,7 @@ export function UnifiedHandForm({
         setNetBb(String(netBbValue));
       }
 
-      setNoFlop(boardFromImport.length < 3);
+      setNoFlop(boardFromImport.length < 3 && !didReachFlopFromTimeline);
       setFlop1(boardFromImport[0] || '');
       setFlop2(boardFromImport[1] || '');
       setFlop3(boardFromImport[2] || '');
@@ -481,6 +512,7 @@ export function UnifiedHandForm({
           numPlayers: inferredPlayers,
           sb: stakes.sb,
           bb: effectiveBb,
+          didReachFlop: boardFromImport.length >= 3 || didReachFlopFromTimeline,
         },
         prefill: {
           preflopAction: importSummary.preflop.action,
@@ -561,7 +593,9 @@ export function UnifiedHandForm({
         .map((card) => normalizeCard(card))
         .filter(Boolean);
       effectiveBoardCards = importedBoard;
-      effectiveDidReachFlop = importedBoard.length >= 3;
+      effectiveDidReachFlop = Boolean(
+        activeImport?.inferred?.didReachFlop || importedBoard.length >= 3
+      );
     }
 
     if (manualActionText.trim()) {
