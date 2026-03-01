@@ -12,7 +12,7 @@ export function HandList({ hands, onHandsChange }) {
 
   if (hands.length === 0) {
     return (
-      <p className="text-slate-400 text-sm">No hands saved yet. Add one above.</p>
+      <p className="text-slate-400 text-sm">No V2 hands saved yet. Add one above.</p>
     );
   }
 
