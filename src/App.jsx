@@ -105,9 +105,25 @@ export function App() {
 
       setCardPickerError('');
       setCardBySlotId(targetId, normalized);
-      setCardPickerTargetId(null);
+      const isExplicitTarget = Boolean(cardPickerTargetId);
+      if (!isExplicitTarget) {
+        setCardPickerTargetId(null);
+        return;
+      }
+
+      const targetIndex = activeSlotIds.indexOf(targetId);
+      let nextTargetId = null;
+      for (let i = targetIndex + 1; i < activeSlotIds.length; i += 1) {
+        const slotId = activeSlotIds[i];
+        if (!normalizeCard(cardValuesById[slotId])) {
+          nextTargetId = slotId;
+          break;
+        }
+      }
+
+      setCardPickerTargetId(nextTargetId);
     },
-    [effectiveTargetId, noFlop, cardValuesById, setCardBySlotId]
+    [effectiveTargetId, noFlop, cardValuesById, setCardBySlotId, cardPickerTargetId]
   );
 
   const resetHandSelection = useCallback(() => {
