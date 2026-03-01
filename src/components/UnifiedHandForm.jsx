@@ -4,6 +4,7 @@ import { normalizeCard } from '../lib/cards.js';
 import { PLAYER_COUNTS, POSITIONS_BY_PLAYERS } from '../lib/positions.js';
 import { buildHandRecordV2, createEmptyHandDraft } from '../lib/handSchema.js';
 import { parseManualActionText } from '../lib/manualActionParser.js';
+import { parseIgnitionHandHistory } from '../lib/ignitionParser.js';
 import { CardLogo } from './CardLogo.jsx';
 
 const ACTION_OPTIONS = [
@@ -20,6 +21,103 @@ function numberOrNull(value) {
   if (value == null || value === '') return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function normalizePosition(value) {
+  return String(value || '')
+    .replace(/\s*\[ME\]\s*$/i, '')
+    .trim()
+    .toUpperCase();
+}
+
+function parseStakesFromGameType(gameType) {
+  const text = String(gameType || '');
+  const match = text.match(/\$?(\d+(?:\.\d+)?)\s*\/\s*\$?(\d+(?:\.\d+)?)/);
+  if (!match) return { sb: null, bb: null };
+  return {
+    sb: numberOrNull(match[1]),
+    bb: numberOrNull(match[2]),
+  };
+}
+
+function mapActionType(actionText) {
+  const text = String(actionText || '').toLowerCase();
+  if (!text) return 'none';
+  if (text.includes('all-in') || text.includes('all in') || text.includes('jam') || text.includes('shove')) return 'all_in';
+  if (text.includes('raise')) return 'raise';
+  if (text.includes('bet')) return 'bet';
+  if (text.includes('call') || text.includes('flat')) return 'call';
+  if (text.includes('check')) return 'check';
+  if (text.includes('fold') || text.includes('muck')) return 'fold';
+  return 'none';
+}
+
+function inferStreetFromActionRow(action) {
+  const text = `${action?.action || ''} ${action?.timestamp || ''}`.toLowerCase();
+  if (text.includes('preflop') || text.includes('pre-flop')) return 'preflop';
+  if (text.includes('flop')) return 'flop';
+  if (text.includes('turn')) return 'turn';
+  if (text.includes('river')) return 'river';
+  return 'unknown';
+}
+
+function createImportDecision(actionType, amount, bbSize) {
+  const amountChips = numberOrNull(amount);
+  const bb = numberOrNull(bbSize);
+  return {
+    action: actionType,
+    amountBb: bb && amountChips != null ? amountChips / bb : null,
+    amountChips,
+    source: 'imported',
+  };
+}
+
+function inferHeroStreetSummaryFromImport(actions, heroPosition, bbSize) {
+  const summary = {
+    preflop: createImportDecision('none', null, bbSize),
+    flop: createImportDecision('none', null, bbSize),
+    turn: createImportDecision('none', null, bbSize),
+    river: createImportDecision('none', null, bbSize),
+  };
+
+  const heroPos = normalizePosition(heroPosition);
+  if (!heroPos || !Array.isArray(actions) || actions.length === 0) return summary;
+
+  const unresolved = [];
+  for (const action of actions) {
+    if (normalizePosition(action?.position) !== heroPos) continue;
+    const actionType = mapActionType(action?.action);
+    if (actionType === 'none') continue;
+    const decision = createImportDecision(actionType, action?.amount, bbSize);
+    const street = inferStreetFromActionRow(action);
+    if (street === 'unknown') {
+      unresolved.push(decision);
+      continue;
+    }
+    summary[street] = decision;
+  }
+
+  const remainingStreets = ['preflop', 'flop', 'turn', 'river'].filter((street) => summary[street].action === 'none');
+  for (let i = 0; i < unresolved.length && i < remainingStreets.length; i += 1) {
+    summary[remainingStreets[i]] = unresolved[i];
+  }
+
+  return summary;
+}
+
+function mapImportTimeline(actions, heroPosition) {
+  const heroPos = normalizePosition(heroPosition);
+  if (!Array.isArray(actions)) return [];
+  return actions.map((action, index) => ({
+    seq: index + 1,
+    street: inferStreetFromActionRow(action),
+    position: action?.position || null,
+    actionRaw: action?.action || '',
+    actionNorm: mapActionType(action?.action),
+    amountChips: numberOrNull(action?.amount),
+    timestamp: action?.timestamp || null,
+    isHero: normalizePosition(action?.position) === heroPos,
+  }));
 }
 
 function formatFieldKey(key) {
@@ -120,12 +218,20 @@ export function UnifiedHandForm({
   onHandSelectionReset,
   heroCard1,
   heroCard2,
+  setHeroCard1,
+  setHeroCard2,
   noFlop,
+  setNoFlop,
   flop1,
   flop2,
   flop3,
   turn,
   river,
+  setFlop1,
+  setFlop2,
+  setFlop3,
+  setTurn,
+  setRiver,
 }) {
   const [numPlayers, setNumPlayers] = useState(8);
   const [heroPosition, setHeroPosition] = useState('');
@@ -152,6 +258,11 @@ export function UnifiedHandForm({
   const [notes, setNotes] = useState('');
   const [formErrors, setFormErrors] = useState({});
   const [parsePreview, setParsePreview] = useState(null);
+  const [importRawText, setImportRawText] = useState('');
+  const [importError, setImportError] = useState('');
+  const [importPreview, setImportPreview] = useState(null);
+  const [parsedImport, setParsedImport] = useState(null);
+  const [parsedImportSnapshot, setParsedImportSnapshot] = useState('');
 
   const positions = POSITIONS_BY_PLAYERS[numPlayers] || [];
   const boardCards = useMemo(() => {
@@ -243,12 +354,167 @@ export function UnifiedHandForm({
     if (!stillValid) setHeroPosition('');
   };
 
+  const parseImportAndApply = ({ silent = false } = {}) => {
+    const raw = importRawText.trim();
+    if (!raw) {
+      if (!silent) setImportError('Paste hand history text first.');
+      return null;
+    }
+
+    try {
+      const parsed = parseIgnitionHandHistory(raw);
+      if (!parsed.actions || parsed.actions.length === 0) {
+        if (!silent) {
+          setImportError(
+            'Could not find actions. Paste the full Ignition hand including the Hand Session table.'
+          );
+        }
+        return null;
+      }
+
+      const me = (parsed.players || []).find((player) => player.isMe) || null;
+      const inferredHeroPosition = normalizePosition(me?.position || '');
+      const inferredPlayers = Array.isArray(parsed.players) ? parsed.players.length : null;
+      const stakes = parseStakesFromGameType(parsed.gameType);
+      const effectiveBb = stakes.bb || numberOrNull(bbSize);
+      const importSummary = inferHeroStreetSummaryFromImport(
+        parsed.actions || [],
+        inferredHeroPosition || heroPosition,
+        effectiveBb
+      );
+      const timeline = mapImportTimeline(parsed.actions || [], inferredHeroPosition || heroPosition);
+      const boardFromImport = (parsed.communityCards || []).map((card) => normalizeCard(card)).filter(Boolean);
+      const heroCardsFromImport = (me?.cards || []).map((card) => normalizeCard(card)).filter(Boolean);
+
+      if (inferredPlayers) setNumPlayers(inferredPlayers);
+      if (inferredHeroPosition) setHeroPosition(inferredHeroPosition);
+      if (stakes.sb != null) setSbSize(String(stakes.sb));
+      if (stakes.bb != null) setBbSize(String(stakes.bb));
+
+      setPreflopAction(importSummary.preflop.action);
+      setPreflopAmountBb(importSummary.preflop.amountBb != null ? String(importSummary.preflop.amountBb) : '');
+      setPreflopAmountChips(importSummary.preflop.amountChips != null ? String(importSummary.preflop.amountChips) : '');
+      setFlopAction(importSummary.flop.action);
+      setFlopAmountBb(importSummary.flop.amountBb != null ? String(importSummary.flop.amountBb) : '');
+      setFlopAmountChips(importSummary.flop.amountChips != null ? String(importSummary.flop.amountChips) : '');
+      setTurnAction(importSummary.turn.action);
+      setTurnAmountBb(importSummary.turn.amountBb != null ? String(importSummary.turn.amountBb) : '');
+      setTurnAmountChips(importSummary.turn.amountChips != null ? String(importSummary.turn.amountChips) : '');
+      setRiverAction(importSummary.river.action);
+      setRiverAmountBb(importSummary.river.amountBb != null ? String(importSummary.river.amountBb) : '');
+      setRiverAmountChips(importSummary.river.amountChips != null ? String(importSummary.river.amountChips) : '');
+
+      if (me?.winLoss != null) {
+        setNetChips(String(me.winLoss));
+        if (effectiveBb) {
+          setNetBb(String(me.winLoss / effectiveBb));
+        }
+      }
+
+      setNoFlop(boardFromImport.length < 3);
+      setFlop1(boardFromImport[0] || '');
+      setFlop2(boardFromImport[1] || '');
+      setFlop3(boardFromImport[2] || '');
+      setTurn(boardFromImport[3] || '');
+      setRiver(boardFromImport[4] || '');
+
+      if (heroCardsFromImport.length >= 2) {
+        setHeroCard1(heroCardsFromImport[0]);
+        setHeroCard2(heroCardsFromImport[1]);
+      }
+
+      const nextImport = {
+        parsed,
+        timeline,
+        importedAt: Date.now(),
+        inferred: {
+          heroPosition: inferredHeroPosition || null,
+          numPlayers: inferredPlayers,
+          sb: stakes.sb,
+          bb: effectiveBb,
+        },
+        prefill: {
+          preflopAction: importSummary.preflop.action,
+          preflopAmountBb: importSummary.preflop.amountBb != null ? String(importSummary.preflop.amountBb) : '',
+          preflopAmountChips: importSummary.preflop.amountChips != null ? String(importSummary.preflop.amountChips) : '',
+          flopAction: importSummary.flop.action,
+          flopAmountBb: importSummary.flop.amountBb != null ? String(importSummary.flop.amountBb) : '',
+          flopAmountChips: importSummary.flop.amountChips != null ? String(importSummary.flop.amountChips) : '',
+          turnAction: importSummary.turn.action,
+          turnAmountBb: importSummary.turn.amountBb != null ? String(importSummary.turn.amountBb) : '',
+          turnAmountChips: importSummary.turn.amountChips != null ? String(importSummary.turn.amountChips) : '',
+          riverAction: importSummary.river.action,
+          riverAmountBb: importSummary.river.amountBb != null ? String(importSummary.river.amountBb) : '',
+          riverAmountChips: importSummary.river.amountChips != null ? String(importSummary.river.amountChips) : '',
+          netBb: me?.winLoss != null && effectiveBb ? String(me.winLoss / effectiveBb) : '',
+          netChips: me?.winLoss != null ? String(me.winLoss) : '',
+        },
+      };
+
+      setParsedImport(nextImport);
+      setParsedImportSnapshot(raw);
+      setImportError('');
+      setImportPreview({
+        handId: parsed.handId || null,
+        tableName: parsed.tableName || null,
+        actionCount: parsed.actions.length,
+        heroPosition: inferredHeroPosition || null,
+        numPlayers: inferredPlayers,
+        winLoss: me?.winLoss ?? null,
+      });
+      return nextImport;
+    } catch (error) {
+      if (!silent) setImportError('Parse error: ' + (error.message || String(error)));
+      return null;
+    }
+  };
+
   const handleSave = (e) => {
     e.preventDefault();
     setFormErrors({});
+    setImportError('');
+
+    const rawImport = importRawText.trim();
+    let activeImport = null;
+    let importParsedNow = false;
+    if (rawImport) {
+      const isCurrent = parsedImport && parsedImportSnapshot === rawImport;
+      if (isCurrent) {
+        activeImport = parsedImport;
+      } else {
+        activeImport = parseImportAndApply({ silent: true });
+        importParsedNow = Boolean(activeImport);
+      }
+      if (!activeImport) {
+        setFormErrors({
+          import: 'Import text exists but could not be parsed. Fix it or clear import text before saving.',
+        });
+        setImportError('Import parse failed. Please review the pasted text.');
+        return;
+      }
+    }
 
     let mergedState = getCurrentState();
     let effectiveHeroPosition = heroPosition;
+    let effectiveNumPlayers = numPlayers;
+    let effectiveSbSize = sbSize;
+    let effectiveBbSize = bbSize;
+    let effectiveBoardCards = boardCards;
+    let effectiveDidReachFlop = !noFlop;
+
+    if (importParsedNow && activeImport?.prefill) {
+      mergedState = activeImport.prefill;
+      if (activeImport?.inferred?.heroPosition) effectiveHeroPosition = activeImport.inferred.heroPosition;
+      if (activeImport?.inferred?.numPlayers) effectiveNumPlayers = activeImport.inferred.numPlayers;
+      if (activeImport?.inferred?.sb != null) effectiveSbSize = String(activeImport.inferred.sb);
+      if (activeImport?.inferred?.bb != null) effectiveBbSize = String(activeImport.inferred.bb);
+      const importedBoard = (activeImport?.parsed?.communityCards || [])
+        .map((card) => normalizeCard(card))
+        .filter(Boolean);
+      effectiveBoardCards = importedBoard;
+      effectiveDidReachFlop = importedBoard.length >= 3;
+    }
+
     if (manualActionText.trim()) {
       const parseResult = runManualParser(true);
       if (parseResult?.merged) {
@@ -260,44 +526,56 @@ export function UnifiedHandForm({
     }
 
     const draft = createEmptyHandDraft();
-    draft.source.mode = 'manual';
+    draft.source.mode = activeImport ? 'ignition_import' : 'manual';
+    draft.source.parserName = activeImport ? 'ignition' : null;
+    draft.source.parserVersion = activeImport ? 'v1' : null;
+    draft.source.importedAt = activeImport ? activeImport.importedAt : null;
+    draft.source.rawText = activeImport ? rawImport : null;
     draft.hero.cards = [heroCard1, heroCard2];
     draft.hero.position = effectiveHeroPosition;
-    draft.table.numPlayers = numPlayers;
-    draft.table.stakes.sb = numberOrNull(sbSize);
-    draft.table.stakes.bb = numberOrNull(bbSize);
-    draft.board.didReachFlop = !noFlop;
-    draft.board.cards = boardCards;
+    draft.table.numPlayers = effectiveNumPlayers;
+    draft.table.gameType = activeImport?.parsed?.gameType || null;
+    draft.table.playMode = activeImport?.parsed?.playMode || null;
+    draft.table.tableName = activeImport?.parsed?.tableName || null;
+    draft.table.stakes.sb = numberOrNull(effectiveSbSize);
+    draft.table.stakes.bb = numberOrNull(effectiveBbSize);
+    draft.board.didReachFlop = effectiveDidReachFlop;
+    draft.board.cards = effectiveBoardCards;
     draft.heroStreetSummary.preflop = {
       action: mergedState.preflopAction,
       amountBb: numberOrNull(mergedState.preflopAmountBb),
       amountChips: numberOrNull(mergedState.preflopAmountChips),
-      source: 'manual',
+      source: activeImport ? 'imported' : 'manual',
     };
     draft.heroStreetSummary.flop = {
       action: mergedState.flopAction,
       amountBb: numberOrNull(mergedState.flopAmountBb),
       amountChips: numberOrNull(mergedState.flopAmountChips),
-      source: 'manual',
+      source: activeImport ? 'imported' : 'manual',
     };
     draft.heroStreetSummary.turn = {
       action: mergedState.turnAction,
       amountBb: numberOrNull(mergedState.turnAmountBb),
       amountChips: numberOrNull(mergedState.turnAmountChips),
-      source: 'manual',
+      source: activeImport ? 'imported' : 'manual',
     };
     draft.heroStreetSummary.river = {
       action: mergedState.riverAction,
       amountBb: numberOrNull(mergedState.riverAmountBb),
       amountChips: numberOrNull(mergedState.riverAmountChips),
-      source: 'manual',
+      source: activeImport ? 'imported' : 'manual',
     };
     draft.result.netBb = numberOrNull(mergedState.netBb);
     draft.result.netChips = numberOrNull(mergedState.netChips);
+    draft.timeline = activeImport
+      ? { actions: activeImport.timeline || [] }
+      : null;
+    draft.opponents.players = activeImport?.parsed?.players || null;
     draft.opponents.knownCardsText = knownCardsText.trim() || null;
     draft.notes = notes.trim() || null;
     draft.manualActionText = manualActionText.trim() || null;
     draft.provenance = {
+      sourceMode: activeImport ? 'imported' : 'manual',
       manualActionText: manualActionText.trim() ? 'manual' : 'manual',
     };
 
@@ -330,6 +608,11 @@ export function UnifiedHandForm({
       setManualActionText('');
       setNotes('');
       setParsePreview(null);
+      setImportRawText('');
+      setImportPreview(null);
+      setParsedImport(null);
+      setParsedImportSnapshot('');
+      setImportError('');
     } catch (error) {
       setFormErrors(error?.validation?.errors || { form: error.message || 'Unable to save hand.' });
     }
@@ -348,6 +631,43 @@ export function UnifiedHandForm({
             <CardLogo value={heroCard1} />
             <CardLogo value={heroCard2} />
           </div>
+        </div>
+
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <label className="block text-sm font-medium text-slate-700 mb-1">Import from Ignition (optional)</label>
+          <p className="text-xs text-slate-500 mb-2">
+            Paste full hand history text, then parse to auto-fill this same form. Save still uses the single button below.
+          </p>
+          <textarea
+            value={importRawText}
+            onChange={(e) => setImportRawText(e.target.value)}
+            rows={5}
+            className={inputClass + ' resize-y font-mono'}
+            placeholder="Paste Ignition hand history here..."
+          />
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => parseImportAndApply({ silent: false })}
+              className="px-3 py-2 rounded-lg bg-slate-200 text-slate-700 text-sm font-medium hover:bg-slate-300 transition"
+            >
+              Parse & preview import
+            </button>
+            {importPreview && (
+              <span className="text-xs text-slate-500">
+                {importPreview.actionCount} actions parsed
+              </span>
+            )}
+          </div>
+          {importPreview && (
+            <p className="text-xs text-slate-500 mt-1">
+              {importPreview.tableName ? `Table: ${importPreview.tableName}. ` : ''}
+              {importPreview.handId ? `Hand #${importPreview.handId}. ` : ''}
+              {importPreview.heroPosition ? `Hero: ${importPreview.heroPosition}. ` : ''}
+              {typeof importPreview.winLoss === 'number' ? `Win/Loss: ${importPreview.winLoss >= 0 ? '+' : ''}${importPreview.winLoss.toFixed(2)}.` : ''}
+            </p>
+          )}
+          {importError && <p className="text-xs text-red-600 mt-1">{importError}</p>}
         </div>
 
         <div>

@@ -47,6 +47,29 @@ function reachedStreets(boardCards, didReachFlop) {
   return reached;
 }
 
+function requiredHeroDecisionStreets(draft, boardCards, didReachFlop) {
+  const reached = reachedStreets(boardCards, didReachFlop);
+  const required = [];
+
+  for (const street of reached) {
+    required.push(street);
+    const decision = sanitizeStreetDecision(draft?.heroStreetSummary?.[street]);
+    if (decision.action === 'fold') break;
+  }
+
+  return required;
+}
+
+function shouldIncludeStreet(street, decisions) {
+  if (street === 'preflop') return true;
+  if (decisions.preflop.action === 'fold') return false;
+  if (street === 'flop') return true;
+  if (decisions.flop.action === 'fold') return false;
+  if (street === 'turn') return true;
+  if (decisions.turn.action === 'fold') return false;
+  return true;
+}
+
 function normalizeBoardCards(cards) {
   if (!Array.isArray(cards)) return [];
   return cards.map((c) => normalizeCard(c)).filter(Boolean);
@@ -172,7 +195,7 @@ export function validateHandDraft(draft, options = {}) {
     errors.netBb = 'Net result in BB is required.';
   }
 
-  const streetsToValidate = reachedStreets(boardCards, didReachFlop);
+  const streetsToValidate = requiredHeroDecisionStreets(draft, boardCards, didReachFlop);
   for (const street of streetsToValidate) {
     const decision = sanitizeStreetDecision(draft?.heroStreetSummary?.[street]);
     if (!decision || decision.action === 'none') {
@@ -202,12 +225,25 @@ export function buildHandRecordV2(draft, options = {}) {
   const didReachFlop = Boolean(draft.board.didReachFlop);
 
   const preflop = sanitizeStreetDecision(draft.heroStreetSummary?.preflop, 'manual');
-  const flop = didReachFlop ? sanitizeStreetDecision(draft.heroStreetSummary?.flop, 'manual') : null;
-  const turn = didReachFlop && boardCards.length >= 4
-    ? sanitizeStreetDecision(draft.heroStreetSummary?.turn, 'manual')
+  const flopDecision = sanitizeStreetDecision(draft.heroStreetSummary?.flop, 'manual');
+  const turnDecision = sanitizeStreetDecision(draft.heroStreetSummary?.turn, 'manual');
+  const riverDecision = sanitizeStreetDecision(draft.heroStreetSummary?.river, 'manual');
+
+  const decisions = {
+    preflop,
+    flop: flopDecision,
+    turn: turnDecision,
+    river: riverDecision,
+  };
+
+  const flop = didReachFlop && boardCards.length >= 3 && shouldIncludeStreet('flop', decisions)
+    ? flopDecision
     : null;
-  const river = didReachFlop && boardCards.length >= 5
-    ? sanitizeStreetDecision(draft.heroStreetSummary?.river, 'manual')
+  const turn = didReachFlop && boardCards.length >= 4 && shouldIncludeStreet('turn', decisions)
+    ? turnDecision
+    : null;
+  const river = didReachFlop && boardCards.length >= 5 && shouldIncludeStreet('river', decisions)
+    ? riverDecision
     : null;
 
   const netBb = Number(draft.result.netBb);

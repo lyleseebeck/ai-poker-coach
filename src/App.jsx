@@ -178,12 +178,20 @@ export function App() {
         onHandSelectionReset={resetHandSelection}
         heroCard1={heroCard1}
         heroCard2={heroCard2}
+        setHeroCard1={setHeroCard1}
+        setHeroCard2={setHeroCard2}
         noFlop={noFlop}
+        setNoFlop={setNoFlop}
         flop1={flop1}
         flop2={flop2}
         flop3={flop3}
         turn={turn}
         river={river}
+        setFlop1={setFlop1}
+        setFlop2={setFlop2}
+        setFlop3={setFlop3}
+        setTurn={setTurn}
+        setRiver={setRiver}
       />
 
       <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
