@@ -642,6 +642,7 @@ export function UnifiedHandForm({
       );
       const timeline = mapImportTimeline(parsed.actions || [], inferredHeroPosition || heroPosition);
       const boardFromImport = (parsed.communityCards || []).map((card) => normalizeCard(card)).filter(Boolean);
+      const hasImportedBoardCards = boardFromImport.length > 0;
       const expectedBoardCards = Math.max(
         boardFromImport.length,
         expectedBoardCardsFromTimeline(timeline)
@@ -676,12 +677,18 @@ export function UnifiedHandForm({
         setNetBb(String(netBbValue));
       }
 
-      setNoFlop(expectedBoardCards === 0);
-      setFlop1(boardFromImport[0] || '');
-      setFlop2(boardFromImport[1] || '');
-      setFlop3(boardFromImport[2] || '');
-      setTurn(boardFromImport[3] || '');
-      setRiver(boardFromImport[4] || '');
+      if (hasImportedBoardCards) {
+        setNoFlop(false);
+        setFlop1(boardFromImport[0] || '');
+        setFlop2(boardFromImport[1] || '');
+        setFlop3(boardFromImport[2] || '');
+        setTurn(boardFromImport[3] || '');
+        setRiver(boardFromImport[4] || '');
+      } else if (expectedBoardCards === 0 && boardCards.length === 0) {
+        setNoFlop(true);
+      } else if (expectedBoardCards >= 3) {
+        setNoFlop(false);
+      }
 
       if (heroCardsFromImport.length >= 2) {
         setHeroCard1(heroCardsFromImport[0]);
@@ -781,10 +788,19 @@ export function UnifiedHandForm({
       const importedBoard = (activeImport?.parsed?.communityCards || [])
         .map((card) => normalizeCard(card))
         .filter(Boolean);
-      effectiveBoardCards = importedBoard;
-      effectiveDidReachFlop = Boolean(
-        activeImport?.inferred?.didReachFlop || importedBoard.length >= 3
-      );
+      if (importedBoard.length > 0) {
+        effectiveBoardCards = importedBoard;
+      }
+      const expectedBoardCards = Number(activeImport?.inferred?.expectedBoardCards ?? -1);
+      if (expectedBoardCards === 0) {
+        effectiveDidReachFlop = false;
+      } else if (expectedBoardCards >= 3) {
+        effectiveDidReachFlop = true;
+      } else {
+        effectiveDidReachFlop = Boolean(
+          activeImport?.inferred?.didReachFlop || effectiveBoardCards.length >= 3
+        );
+      }
     }
 
     if (activeImport?.inferred) {
