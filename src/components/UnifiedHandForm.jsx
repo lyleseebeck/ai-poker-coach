@@ -40,6 +40,53 @@ function parseStakesFromGameType(gameType) {
   };
 }
 
+function parseStakesFromActions(actions) {
+  if (!Array.isArray(actions) || actions.length === 0) return { sb: null, bb: null };
+
+  let sb = null;
+  let bb = null;
+
+  for (const action of actions) {
+    const actionText = String(action?.action || '').toLowerCase();
+    const amount = numberOrNull(action?.amount);
+    if (amount == null) continue;
+
+    if (sb == null && actionText.includes('small blind')) {
+      sb = amount;
+    }
+    if (bb == null && actionText.includes('big blind')) {
+      bb = amount;
+    }
+    if (sb != null && bb != null) break;
+  }
+
+  return { sb, bb };
+}
+
+function inferImportStakes(parsed, fallbackBb) {
+  const fromText = parseStakesFromGameType(`${parsed?.gameType || ''} ${parsed?.tableName || ''}`);
+  const fromActions = parseStakesFromActions(parsed?.actions || []);
+  const sb = fromText.sb ?? fromActions.sb ?? null;
+  const bb = fromText.bb ?? fromActions.bb ?? numberOrNull(fallbackBb);
+  return { sb, bb };
+}
+
+function inferImportNetChips(parsed, heroPosition) {
+  const heroPos = normalizePosition(heroPosition);
+  const me = (parsed?.players || []).find((player) => player.isMe);
+  if (me?.winLoss != null) return numberOrNull(me.winLoss);
+
+  if (!Array.isArray(parsed?.actions) || !heroPos) return null;
+  for (let i = parsed.actions.length - 1; i >= 0; i -= 1) {
+    const action = parsed.actions[i];
+    if (normalizePosition(action?.position) !== heroPos) continue;
+    if (!String(action?.action || '').toLowerCase().includes('hand result')) continue;
+    const amount = numberOrNull(action?.amount);
+    if (amount != null) return amount;
+  }
+  return null;
+}
+
 function mapActionType(actionText) {
   const text = String(actionText || '').toLowerCase();
   if (!text) return 'none';
@@ -375,7 +422,7 @@ export function UnifiedHandForm({
       const me = (parsed.players || []).find((player) => player.isMe) || null;
       const inferredHeroPosition = normalizePosition(me?.position || '');
       const inferredPlayers = Array.isArray(parsed.players) ? parsed.players.length : null;
-      const stakes = parseStakesFromGameType(parsed.gameType);
+      const stakes = inferImportStakes(parsed, bbSize);
       const effectiveBb = stakes.bb || numberOrNull(bbSize);
       const importSummary = inferHeroStreetSummaryFromImport(
         parsed.actions || [],
@@ -385,6 +432,8 @@ export function UnifiedHandForm({
       const timeline = mapImportTimeline(parsed.actions || [], inferredHeroPosition || heroPosition);
       const boardFromImport = (parsed.communityCards || []).map((card) => normalizeCard(card)).filter(Boolean);
       const heroCardsFromImport = (me?.cards || []).map((card) => normalizeCard(card)).filter(Boolean);
+      const netChipsValue = inferImportNetChips(parsed, inferredHeroPosition || heroPosition);
+      const netBbValue = netChipsValue != null && effectiveBb != null ? netChipsValue / effectiveBb : null;
 
       if (inferredPlayers) setNumPlayers(inferredPlayers);
       if (inferredHeroPosition) setHeroPosition(inferredHeroPosition);
@@ -404,11 +453,11 @@ export function UnifiedHandForm({
       setRiverAmountBb(importSummary.river.amountBb != null ? String(importSummary.river.amountBb) : '');
       setRiverAmountChips(importSummary.river.amountChips != null ? String(importSummary.river.amountChips) : '');
 
-      if (me?.winLoss != null) {
-        setNetChips(String(me.winLoss));
-        if (effectiveBb) {
-          setNetBb(String(me.winLoss / effectiveBb));
-        }
+      if (netChipsValue != null) {
+        setNetChips(String(netChipsValue));
+      }
+      if (netBbValue != null) {
+        setNetBb(String(netBbValue));
       }
 
       setNoFlop(boardFromImport.length < 3);
@@ -446,8 +495,8 @@ export function UnifiedHandForm({
           riverAction: importSummary.river.action,
           riverAmountBb: importSummary.river.amountBb != null ? String(importSummary.river.amountBb) : '',
           riverAmountChips: importSummary.river.amountChips != null ? String(importSummary.river.amountChips) : '',
-          netBb: me?.winLoss != null && effectiveBb ? String(me.winLoss / effectiveBb) : '',
-          netChips: me?.winLoss != null ? String(me.winLoss) : '',
+          netBb: netBbValue != null ? String(netBbValue) : '',
+          netChips: netChipsValue != null ? String(netChipsValue) : '',
         },
       };
 
@@ -460,7 +509,7 @@ export function UnifiedHandForm({
         actionCount: parsed.actions.length,
         heroPosition: inferredHeroPosition || null,
         numPlayers: inferredPlayers,
-        winLoss: me?.winLoss ?? null,
+        winLoss: netChipsValue,
       });
       return nextImport;
     } catch (error) {
