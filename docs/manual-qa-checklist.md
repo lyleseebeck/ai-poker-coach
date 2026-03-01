@@ -35,3 +35,7 @@ Run this after meaningful UI changes.
 
 - [ ] Verify app lists only V2 hands.
 - [ ] Confirm legacy/non-V2 records do not crash UI.
+- [ ] Deleting a saved hand shows an "are you sure" confirmation first.
+- [ ] Confirm deleted hand moves to Trash instead of disappearing permanently.
+- [ ] Restore a trashed hand and confirm it returns to Saved hands.
+- [ ] Use "Delete now" in Trash and confirm permanent removal.

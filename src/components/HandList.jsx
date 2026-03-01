@@ -1,14 +1,7 @@
-import { getHands, saveHands } from '../lib/storage.js';
 import { HandCard } from './HandCard.jsx';
 
-export function HandList({ hands, onHandsChange }) {
+export function HandList({ hands, onDeleteHand }) {
   const sorted = [...hands].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-
-  const handleDelete = (id) => {
-    const next = getHands().filter((h) => h.id !== id);
-    saveHands(next);
-    onHandsChange();
-  };
 
   if (hands.length === 0) {
     return (
@@ -19,7 +12,7 @@ export function HandList({ hands, onHandsChange }) {
   return (
     <div className="space-y-3">
       {sorted.map((hand) => (
-        <HandCard key={hand.id} hand={hand} onDelete={handleDelete} />
+        <HandCard key={hand.id} hand={hand} onDelete={onDeleteHand} />
       ))}
     </div>
   );

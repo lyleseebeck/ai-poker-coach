@@ -93,10 +93,11 @@ src/
     UnifiedHandForm.jsx – single hand capture flow (manual + import + AI proposal)
     HandList.jsx    – list of saved hands
     HandCard.jsx    – V2 saved-hand renderer with street/detail summary
+    TrashList.jsx   – deleted hands retained for 30-day trash window
 tests/
   *.test.js         – schema/parser/storage unit tests (Node test runner)
 docs/
   manual-qa-checklist.md – step-by-step UI smoke checklist
 ```
 
-Current UX is a unified "Hand capture" flow with one save button, optional import parse/prefill, optional manual action narrative parsing, and saved-hand cards rendered from the canonical V2 schema.
+Current UX is a unified "Hand capture" flow with one save button, optional import parse/prefill, optional manual action narrative parsing, saved-hand cards rendered from the canonical V2 schema, and soft-delete to 30-day trash.

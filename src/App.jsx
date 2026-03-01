@@ -1,10 +1,18 @@
 import { useState, useCallback, useEffect } from 'react';
-import { getHands } from './lib/storage.js';
+import {
+  getHands,
+  getTrashedHands,
+  moveHandToTrash,
+  permanentlyDeleteHand,
+  restoreHandFromTrash,
+  TRASH_RETENTION_DAYS,
+} from './lib/storage.js';
 import { normalizeCard } from './lib/cards.js';
 import { CardPicker } from './components/CardPicker.jsx';
 import { CardLogo } from './components/CardLogo.jsx';
 import { HandList } from './components/HandList.jsx';
 import { HandDetailsForm } from './components/HandDetailsForm.jsx';
+import { TrashList } from './components/TrashList.jsx';
 import { UnifiedHandForm } from './components/UnifiedHandForm.jsx';
 
 const HERO_SLOT_IDS = ['hero-card1', 'hero-card2'];
@@ -21,6 +29,7 @@ const SLOT_LABELS = {
 
 export function App() {
   const [hands, setHands] = useState(() => getHands());
+  const [trashedHands, setTrashedHands] = useState(() => getTrashedHands());
   const [heroCard1, setHeroCard1] = useState('');
   const [heroCard2, setHeroCard2] = useState('');
   const [noFlop, setNoFlop] = useState(false);
@@ -35,7 +44,41 @@ export function App() {
 
   const refreshHands = useCallback(() => {
     setHands(getHands());
+    setTrashedHands(getTrashedHands());
   }, []);
+
+  const handleDeleteHand = useCallback(
+    (id) => {
+      if (!id) return;
+      const ok = window.confirm(
+        `Move this hand to trash? It will be permanently deleted after ${TRASH_RETENTION_DAYS} days.`
+      );
+      if (!ok) return;
+      moveHandToTrash(id);
+      refreshHands();
+    },
+    [refreshHands]
+  );
+
+  const handleRestoreHand = useCallback(
+    (id) => {
+      if (!id) return;
+      restoreHandFromTrash(id);
+      refreshHands();
+    },
+    [refreshHands]
+  );
+
+  const handleDeleteNow = useCallback(
+    (id) => {
+      if (!id) return;
+      const ok = window.confirm('Permanently delete this trashed hand now? This cannot be undone.');
+      if (!ok) return;
+      permanentlyDeleteHand(id);
+      refreshHands();
+    },
+    [refreshHands]
+  );
 
   const registerCardPickerTarget = useCallback((id) => {
     setCardPickerTargetId(id);
@@ -228,7 +271,19 @@ export function App() {
 
       <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
         <h2 className="text-lg font-medium text-slate-700 mb-4">Saved hands</h2>
-        <HandList hands={hands} onHandsChange={refreshHands} />
+        <HandList hands={hands} onDeleteHand={handleDeleteHand} />
+      </section>
+
+      <section className="mt-6 bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+        <h2 className="text-lg font-medium text-slate-700 mb-1">Trash</h2>
+        <p className="text-xs text-slate-500 mb-4">
+          Deleted hands stay here for {TRASH_RETENTION_DAYS} days, then are removed automatically.
+        </p>
+        <TrashList
+          hands={trashedHands}
+          onRestoreHand={handleRestoreHand}
+          onDeleteNow={handleDeleteNow}
+        />
       </section>
     </div>
   );
