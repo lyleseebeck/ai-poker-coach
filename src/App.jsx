@@ -157,7 +157,10 @@ export function App() {
           <button
             type="button"
             onClick={() => registerCardPickerTarget('hero-card1')}
-            className="flex flex-col items-center gap-1 rounded-lg border-2 border-transparent p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
+            className={
+              'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 ' +
+              (effectiveTargetId === 'hero-card1' ? 'border-emerald-500 bg-emerald-50/50' : 'border-transparent')
+            }
             aria-label="Select card 1"
           >
             <CardLogo value={heroCard1} />
@@ -166,7 +169,10 @@ export function App() {
           <button
             type="button"
             onClick={() => registerCardPickerTarget('hero-card2')}
-            className="flex flex-col items-center gap-1 rounded-lg border-2 border-transparent p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
+            className={
+              'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 ' +
+              (effectiveTargetId === 'hero-card2' ? 'border-emerald-500 bg-emerald-50/50' : 'border-transparent')
+            }
             aria-label="Select card 2"
           >
             <CardLogo value={heroCard2} />
@@ -184,7 +190,7 @@ export function App() {
         turn={turn}
         river={river}
         registerCardPickerTarget={registerCardPickerTarget}
-        activeCardTargetId={cardPickerTargetId}
+        activeCardTargetId={effectiveTargetId}
       />
 
       <ImportSection
