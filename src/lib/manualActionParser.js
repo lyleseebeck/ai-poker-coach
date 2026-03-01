@@ -372,6 +372,9 @@ export function parseManualActionText(rawText, options = {}) {
   return {
     parsedFields: {
       manualActionText: text || null,
+      hero: {
+        position: heroPosition || null,
+      },
       board: {
         didReachFlop: didReach.value,
       },

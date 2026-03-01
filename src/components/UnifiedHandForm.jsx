@@ -212,6 +212,16 @@ export function UnifiedHandForm({
       boardCardsCount: boardCards.length,
       heroPosition,
     });
+    const inferredHeroPosition =
+      String(parsed.parsedFields?.hero?.position || parsed.metadata?.heroPosition || '').trim();
+
+    if (inferredHeroPosition) {
+      const shouldSetHeroPosition = !fillOnlyMissing || !heroPosition;
+      if (shouldSetHeroPosition) {
+        setHeroPosition(inferredHeroPosition);
+      }
+    }
+
     const merged = mergeParsedIntoState(getCurrentState(), parsed, fillOnlyMissing);
     setFromMergedState(merged);
     setParsePreview({
@@ -222,7 +232,7 @@ export function UnifiedHandForm({
           ? 'Parser found partial info. Missing required fields are listed below.'
           : 'Parser populated fields successfully.',
     });
-    return { parsed, merged };
+    return { parsed, merged, inferredHeroPosition };
   };
 
   const handlePlayersChange = (value) => {
@@ -238,17 +248,21 @@ export function UnifiedHandForm({
     setFormErrors({});
 
     let mergedState = getCurrentState();
+    let effectiveHeroPosition = heroPosition;
     if (manualActionText.trim()) {
       const parseResult = runManualParser(true);
       if (parseResult?.merged) {
         mergedState = parseResult.merged;
+      }
+      if (parseResult?.inferredHeroPosition) {
+        effectiveHeroPosition = parseResult.inferredHeroPosition;
       }
     }
 
     const draft = createEmptyHandDraft();
     draft.source.mode = 'manual';
     draft.hero.cards = [heroCard1, heroCard2];
-    draft.hero.position = heroPosition;
+    draft.hero.position = effectiveHeroPosition;
     draft.table.numPlayers = numPlayers;
     draft.table.stakes.sb = numberOrNull(sbSize);
     draft.table.stakes.bb = numberOrNull(bbSize);
