@@ -151,6 +151,27 @@ function getInvalidOutputSnippet(error) {
   return lastInvalid?.contentSnippet || '';
 }
 
+function getInvalidOutputDiagnostics(error) {
+  const attempts = Array.isArray(error?.details?.attempts) ? error.details.attempts : [];
+  const invalidAttempts = attempts.filter((attempt) => attempt.reason === 'invalid_output');
+  const previousOutput = invalidAttempts.slice(-1)[0]?.contentSnippet || '';
+  const validationFailures = [];
+
+  for (const attempt of invalidAttempts) {
+    if (Array.isArray(attempt?.validationFailures)) {
+      validationFailures.push(...attempt.validationFailures.map((item) => String(item)));
+    }
+    if (attempt?.detail) {
+      validationFailures.push(String(attempt.detail));
+    }
+  }
+
+  return {
+    previousOutput,
+    validationFailures: [...new Set(validationFailures.map((item) => item.trim()).filter(Boolean))],
+  };
+}
+
 export async function coachHand(payload, options = {}) {
   const request = validateCoachRequest(payload);
   const { history: historyWindow, truncated, windowSize } = truncateHistoryWindow(request.history, HISTORY_WINDOW_SIZE);
@@ -189,13 +210,15 @@ export async function coachHand(payload, options = {}) {
     }
 
     warnings.push('Coach output required one repair retry to return valid JSON.');
+    const diagnostics = getInvalidOutputDiagnostics(error);
 
     const repairMessages = buildCoachRepairMessages({
       handContext,
       history: historyWindow,
       message: request.message,
-      previousOutput: getInvalidOutputSnippet(error),
+      previousOutput: diagnostics.previousOutput || getInvalidOutputSnippet(error),
       validationError: error?.message || 'Invalid JSON/schema from model.',
+      validationFailures: diagnostics.validationFailures,
       historyWindowSize: windowSize,
     });
 

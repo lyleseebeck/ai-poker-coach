@@ -156,7 +156,7 @@ export function createOpenRouterProvider(options = {}) {
             body: JSON.stringify({
               model,
               messages,
-              temperature: 0.2,
+              temperature: 0,
             }),
             signal: signalState.signal,
           });

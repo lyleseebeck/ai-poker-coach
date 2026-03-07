@@ -115,11 +115,46 @@ export function buildCoachRepairMessages({
   message,
   previousOutput,
   validationError,
+  validationFailures,
   historyWindowSize = HISTORY_WINDOW_SIZE,
 }) {
+  const safeValidationFailures = Array.isArray(validationFailures)
+    ? validationFailures.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
+    : [];
+
+  const requiredFactCheck = handContext?.factCheckGroundTruth || {};
+
+  const shapeReference = {
+    ...RESPONSE_SHAPE_REFERENCE,
+    assistant: {
+      ...RESPONSE_SHAPE_REFERENCE.assistant,
+      analysis: {
+        ...RESPONSE_SHAPE_REFERENCE.assistant.analysis,
+        factCheck: {
+          heroCards: Array.isArray(requiredFactCheck.heroCards) ? requiredFactCheck.heroCards : ['5d', '4d'],
+          heroHandCode: requiredFactCheck.heroHandCode || '54s',
+          heroPosition: requiredFactCheck.heroPosition || 'BB',
+          preflopLastAggressorPosition: requiredFactCheck.preflopLastAggressorPosition || 'UTG+1',
+          heroWasPreflopAggressor: Boolean(requiredFactCheck.heroWasPreflopAggressor),
+          heroCanCbetFlop: Boolean(requiredFactCheck.heroCanCbetFlop),
+          heroPostflopPosition: requiredFactCheck.heroPostflopPosition || 'unknown',
+        },
+      },
+    },
+  };
+
   const repairInstruction = [
     'Your previous answer was invalid JSON or did not match the required schema.',
     `Validation issue: ${validationError || 'Unknown schema issue.'}`,
+    safeValidationFailures.length > 0
+      ? `Validation failures to fix exactly:\n- ${safeValidationFailures.join('\n- ')}`
+      : 'Validation failures to fix exactly: unknown (must still satisfy full schema).',
+    'Critical requirement: analysis.factCheck must be present and must match hand context ground truth exactly.',
+    'Critical requirement: if heroCanCbetFlop is false, never recommend hero c-bet/continuation-bet on the flop.',
+    'Critical requirement: if heroPostflopPosition is out_of_position, never imply in-position lines such as check back.',
+    'Critical requirement: use no numeric percentages anywhere.',
+    'Return exactly one JSON object in this shape (no markdown):',
+    JSON.stringify(shapeReference, null, 2),
     'Correct your answer and return only valid JSON matching the required schema.',
     'Do not include markdown or extra commentary.',
     'Previous invalid output:',
