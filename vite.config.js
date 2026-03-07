@@ -1,6 +1,7 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { parseManualActionText } from './src/lib/manualActionParser.js';
+import { registerCoachHandEndpoint } from './server/coach/http.js';
 
 const MAX_BODY_BYTES = 200_000;
 
@@ -167,12 +168,20 @@ const handNormalizeApiPlugin = {
   name: 'hand-normalize-api',
   configureServer(server) {
     registerHandNormalizeEndpoint(server);
+    registerCoachHandEndpoint(server);
   },
   configurePreviewServer(server) {
     registerHandNormalizeEndpoint(server);
+    registerCoachHandEndpoint(server);
   },
 };
 
-export default defineConfig({
-  plugins: [react(), handNormalizeApiPlugin],
+export default defineConfig(({ mode }) => {
+  // Ensure middleware-backed local API routes can read .env values via process.env.
+  const env = loadEnv(mode, process.cwd(), '');
+  Object.assign(process.env, env);
+
+  return {
+    plugins: [react(), handNormalizeApiPlugin],
+  };
 });

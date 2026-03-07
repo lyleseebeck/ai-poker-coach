@@ -14,6 +14,7 @@ import { HandList } from './components/HandList.jsx';
 import { HandDetailsForm } from './components/HandDetailsForm.jsx';
 import { TrashList } from './components/TrashList.jsx';
 import { UnifiedHandForm } from './components/UnifiedHandForm.jsx';
+import { CoachPanel } from './components/CoachPanel.jsx';
 
 const HERO_SLOT_IDS = ['hero-card1', 'hero-card2'];
 const COMMUNITY_SLOT_IDS = ['import-flop1', 'import-flop2', 'import-flop3', 'import-turn', 'import-river'];
@@ -273,6 +274,8 @@ export function App() {
         <h2 className="text-lg font-medium text-slate-700 mb-4">Saved hands</h2>
         <HandList hands={hands} onDeleteHand={handleDeleteHand} />
       </section>
+
+      <CoachPanel hands={hands} />
 
       <section className="mt-6 bg-white rounded-xl shadow-sm border border-slate-200 p-6">
         <h2 className="text-lg font-medium text-slate-700 mb-1">Trash</h2>

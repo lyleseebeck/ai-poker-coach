@@ -13,6 +13,13 @@ function parseCardList(s) {
   return s.trim().split(/\s+/).filter(Boolean);
 }
 
+function canActionTakeStandaloneAmount(actionText) {
+  const text = String(actionText || '').toLowerCase();
+  if (!text) return false;
+  if (text.includes('set dealer') || text.includes('set button')) return false;
+  return true;
+}
+
 export function parseIgnitionHandHistory(rawText) {
   const lines = rawText
     .trim()
@@ -117,7 +124,7 @@ export function parseIgnitionHandHistory(rawText) {
         const row = lines[i];
         if (!row) { i++; continue; }
         const onlyMoney = row.match(/^\$?([\d.]+)$/);
-        if (onlyMoney && lastAction) {
+        if (onlyMoney && lastAction && canActionTakeStandaloneAmount(lastAction.action)) {
           lastAction.amount = parseFloat(onlyMoney[1], 10);
           i++;
           continue;
