@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { parseManualActionText } from './src/lib/manualActionParser.js';
+import { registerCoachHandEndpoint } from './server/coach/http.js';
 
 const MAX_BODY_BYTES = 200_000;
 
@@ -167,9 +168,11 @@ const handNormalizeApiPlugin = {
   name: 'hand-normalize-api',
   configureServer(server) {
     registerHandNormalizeEndpoint(server);
+    registerCoachHandEndpoint(server);
   },
   configurePreviewServer(server) {
     registerHandNormalizeEndpoint(server);
+    registerCoachHandEndpoint(server);
   },
 };
 

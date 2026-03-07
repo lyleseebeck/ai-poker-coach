@@ -1,76 +1,134 @@
 # AI Poker Coach — Poker Hand Tracker
 
-A React web app to log and review your poker hands. Everything runs in your browser and data is stored only on your computer (localStorage). Supports importing full hand history from Ignition Casino and a point-and-click card picker.
+A React web app to log and review poker hands. Data stays in your browser (`localStorage`).
+
+Core features:
+- Manual hand capture with schema validation
+- Ignition hand history parsing
+- AI-assisted manual action normalization
+- Multi-turn GTO coaching chat per saved hand (session-only)
 
 ---
 
-## How to run it
+## How to run
 
-1. **Install dependencies** (one time):
+1. Install dependencies:
    ```bash
    npm install
    ```
 
-2. **Start the dev server**:
+2. Configure coach environment variables:
+   ```bash
+   cp .env.example .env
+   ```
+   Fill in `OPENROUTER_API_KEY` and your free-model list.
+
+3. Start dev server:
    ```bash
    npm run dev
    ```
-   Then open the URL shown (e.g. http://localhost:5173) in your browser.
+   Open the local URL shown by Vite (usually `http://localhost:5173`).
 
-3. **Or build for production**:
-   ```bash
-   npm run build
-   ```
-   Then serve the `dist` folder (e.g. with `npm run preview` or any static file server).
-
-4. **Run unit tests**:
+4. Run tests:
    ```bash
    npm test
    ```
 
+5. Build production assets:
+   ```bash
+   npm run build
+   ```
+
 ---
 
-## Tech stack
+## Coach feature (v1)
 
-- **React 18** – UI components and state
-- **Vite** – build tool and dev server
-- **Tailwind CSS** – styling
-- **localStorage** – persistence (V2 records only; legacy records are ignored)
+- In the **Coach** section, select a saved hand from the dropdown.
+- Enter a question/prompt and submit.
+- The app sends the selected hand plus your prompt to `/api/coach-hand`.
+- The backend applies a master coaching prompt and calls OpenRouter with free-model fallback.
+- Responses are strict JSON, rendered in structured sections on the frontend.
+- Chat is **ephemeral** (not persisted) and context is limited to the **last 8 messages**.
 
-### Local API contract
+---
 
-During local development (`npm run dev`), the app exposes:
+## Environment variables
 
-- `POST /api/hand-normalize`
+Required:
+- `COACH_PROVIDER=openrouter`
+- `OPENROUTER_API_KEY=<your key>`
+- `COACH_OPENROUTER_MODELS=<comma-separated model ids, each containing :free>`
 
-Request body (JSON):
+Optional:
+- `COACH_REQUEST_TIMEOUT_MS=25000`
+- `COACH_SITE_URL=http://localhost:5173`
+- `COACH_APP_NAME=AI Poker Coach`
 
+Free-only enforcement:
+- Every configured model must include `:free`.
+- Non-free model ids fail fast during provider initialization.
+
+---
+
+## API contracts
+
+### `POST /api/hand-normalize`
+Existing local deterministic/manual-action normalization endpoint.
+
+### `POST /api/coach-hand`
+Request:
 ```json
 {
-  "manualActionText": "free-form hand narrative",
-  "context": {
-    "heroPosition": "BB",
-    "boardCards": ["Ah", "Kd", "Tc"],
-    "stakes": { "sb": 0.1, "bb": 0.25 },
-    "currentFields": {}
+  "handId": "string",
+  "hand": { "schemaVersion": 2 },
+  "message": "string",
+  "history": [
+    { "role": "user", "content": "string" },
+    { "role": "assistant", "content": "string" }
+  ]
+}
+```
+
+Response:
+```json
+{
+  "assistant": {
+    "content": "string",
+    "analysis": {
+      "situationSummary": "string",
+      "biggestLeaks": ["string"],
+      "gtoCorrections": ["string"],
+      "streetPlan": {
+        "preflop": "string",
+        "flop": "string",
+        "turn": "string",
+        "river": "string"
+      },
+      "exploitativeAdjustments": ["string"],
+      "practiceDrills": ["string"],
+      "nextSessionFocus": "string",
+      "confidence": "low",
+      "assumptions": ["string"]
+    }
   },
-  "deterministicParse": {}
+  "meta": {
+    "provider": "openrouter",
+    "model": "string",
+    "fallbackUsed": true,
+    "historyWindowUsed": 8,
+    "truncatedHistory": false
+  },
+  "warnings": []
 }
 ```
 
-Response body (JSON):
+---
 
-```json
-{
-  "parsedFields": {},
-  "confidenceByField": {},
-  "evidenceSnippets": {},
-  "missingRequired": [],
-  "needsUserInput": [],
-  "overallConfidence": 0.82,
-  "model": "local-contract-v1"
-}
-```
+## Deployment notes
+
+- A deployable Vercel-style route is provided at `api/coach-hand.js`.
+- Local dev and preview both expose `/api/coach-hand` through Vite middleware.
+- Core coach logic lives in `server/coach/*` so route wrappers stay thin.
 
 ---
 
@@ -78,26 +136,24 @@ Response body (JSON):
 
 ```
 src/
-  App.jsx           – main app, shared card state, picker targeting
-  main.jsx          – React entry point
-  index.css         – Tailwind + global styles
-  lib/
-    handSchema.js   – canonical V2 draft/validation/build utilities
-    manualActionParser.js – deterministic parser + confidence/missing fields
-    aiNormalizeClient.js – frontend adapter for /api/hand-normalize
-    storage.js      – V2-only getHands/saveHands
-    ignitionParser.js – Ignition hand history parser
+  App.jsx
   components/
-    CardPicker.jsx  – rank + suit point-and-click picker
-    HandDetailsForm.jsx – community card controls and no-flop toggle
-    UnifiedHandForm.jsx – single hand capture flow (manual + import + AI proposal)
-    HandList.jsx    – list of saved hands
-    HandCard.jsx    – V2 saved-hand renderer with street/detail summary
-    TrashList.jsx   – deleted hands retained for 30-day trash window
+    CoachPanel.jsx
+  lib/
+    coachClient.js
+server/
+  coach/
+    coachService.js
+    coachPrompt.js
+    coachSchema.js
+    handContext.js
+    http.js
+    providers/
+      index.js
+      openRouterProvider.js
+api/
+  coach-hand.js
 tests/
-  *.test.js         – schema/parser/storage unit tests (Node test runner)
-docs/
-  manual-qa-checklist.md – step-by-step UI smoke checklist
+  *.test.js
 ```
 
-Current UX is a unified "Hand capture" flow with one save button, optional import parse/prefill, optional manual action narrative parsing, saved-hand cards rendered from the canonical V2 schema, and soft-delete to 30-day trash.
