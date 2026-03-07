@@ -41,13 +41,14 @@ Core features:
 
 ---
 
-## Coach feature (v3 factual guardrails)
+## Coach feature (v3.1)
 
 - In the **Coach** section, select a saved hand from the dropdown.
 - Enter a question/prompt and submit.
 - The app sends the selected hand plus your prompt to `/api/coach-hand`.
 - The backend applies a master coaching prompt and calls OpenRouter with free-model fallback.
-- Responses are strict JSON with verdict-first analysis and hidden fact-check validation before display.
+- First turn in a hand thread returns strict verdict-first analysis JSON.
+- Followup turns return lightweight free-form JSON chat (optional short highlights).
 - Chat is **ephemeral** (not persisted) and context is limited to the **last 8 messages**.
 
 ---
@@ -96,7 +97,7 @@ Request:
 }
 ```
 
-Response:
+Response (initial analysis mode):
 ```json
 {
   "assistant": {
@@ -122,10 +123,7 @@ Response:
           "gtoPreferredAction": "string"
         }
       ],
-      "biggestLeaks": ["string"],
-      "gtoCorrections": ["string"],
-      "topAlternatives": ["string", "string"],
-      "exploitativeAdjustments": ["string"],
+      "keyAdjustments": ["string"],
       "confidence": "low"
     }
   },
@@ -134,7 +132,25 @@ Response:
     "model": "string",
     "fallbackUsed": true,
     "historyWindowUsed": 8,
-    "truncatedHistory": false
+    "truncatedHistory": false,
+    "failedModelAttempts": [{ "model": "string", "reason": "string", "status": 429 }],
+    "attemptSummary": "provider_retryable_status:429x1",
+    "responseMode": "analysis"
+  },
+  "warnings": []
+}
+```
+
+Response (followup mode):
+```json
+{
+  "assistant": {
+    "content": "free-form paragraph",
+    "followupHighlights": ["optional bullet", "optional bullet"]
+  },
+  "meta": {
+    "responseMode": "followup",
+    "...": "same meta fields as above"
   },
   "warnings": []
 }
@@ -142,14 +158,20 @@ Response:
 
 Verdict rules:
 - `analysis.factCheck` is required and validated server-side against derived hand facts.
-- `overallVerdict` and `streetVerdicts[].verdict` are limited to `correct|mixed|incorrect|unclear`.
+- `overallVerdict` is server-derived from `streetVerdicts` using worst-street precedence:
+  - `incorrect` if any street is `incorrect`
+  - else `mixed` if any street is `mixed`
+  - else `correct` if at least one graded street is `correct`
+  - else `unclear`
+- `streetVerdicts[].verdict` is limited to `correct|mixed|incorrect|unclear`.
 - `streetVerdicts` must include every street where hero took an action.
-- `topAlternatives` must contain exactly 2 items.
-- Removed fields: `assumptions`, `nextSessionFocus`, `practiceDrills`, `streetPlan`.
+- `keyAdjustments` is the single consolidated guidance section.
+- Removed fields: `assumptions`, `nextSessionFocus`, `practiceDrills`, `streetPlan`, `topAlternatives`, `biggestLeaks`, `gtoCorrections`, `exploitativeAdjustments`.
 - Numeric `%` frequencies are disallowed; model must use qualitative frequencies.
 
 Error response details for strict failures:
 - `error.details.validationFailures`: plain-language validation/fact-check failures.
+- `error.details.failedModelAttempts`: failed model calls with reason/status.
 - `error.details.attemptSummary`: summarized model-attempt outcomes.
 - `error.details.lastModel`: most recent model id used.
 

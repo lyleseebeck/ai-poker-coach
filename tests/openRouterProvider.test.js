@@ -28,7 +28,7 @@ test('openRouter provider falls back to next free model on retryable status', as
     if (callCount === 1) {
       return makeResponse(429, { error: { message: 'rate limit' } });
     }
-    return makeResponse(200, makeChoiceContent('{"assistant":{"content":"ok","analysis":{"overallVerdict":"mixed","overallReason":"x","streetVerdicts":[{"street":"preflop","heroAction":"call","verdict":"mixed","reason":"x","gtoPreferredAction":"x"}],"biggestLeaks":[],"gtoCorrections":[],"topAlternatives":["x","y"],"exploitativeAdjustments":[],"confidence":"low"}}}'));
+    return makeResponse(200, makeChoiceContent('{"assistant":{"content":"ok","analysis":{"factCheck":{"heroCards":["As","Kd"],"heroHandCode":"AKo","heroPosition":"BTN","preflopLastAggressorPosition":"CO","heroWasPreflopAggressor":false,"heroCanCbetFlop":false,"heroPostflopPosition":"unknown"},"overallVerdict":"mixed","overallReason":"x","streetVerdicts":[{"street":"preflop","heroAction":"call","verdict":"mixed","reason":"x","gtoPreferredAction":"x"}],"keyAdjustments":["x"],"confidence":"low"}}}'));
   };
 
   const provider = createOpenRouterProvider({

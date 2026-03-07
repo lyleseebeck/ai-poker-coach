@@ -2,11 +2,17 @@ import {
   HISTORY_WINDOW_SIZE,
   parseCoachModelJson,
   truncateHistoryWindow,
-  validateCoachModelPayload,
+  validateFollowupCoachModelPayload,
+  validateInitialCoachModelPayload,
   validateCoachRequest,
 } from './coachSchema.js';
 import { buildHandContext } from './handContext.js';
-import { buildCoachMessages, buildCoachRepairMessages } from './coachPrompt.js';
+import {
+  buildFollowupCoachMessages,
+  buildFollowupCoachRepairMessages,
+  buildInitialCoachMessages,
+  buildInitialCoachRepairMessages,
+} from './coachPrompt.js';
 import { createCoachError } from './errors.js';
 import { getLlmProvider } from './providers/index.js';
 
@@ -20,7 +26,7 @@ function parseTimeoutMs(value) {
 }
 
 function summarizeAttempts(attempts) {
-  if (!Array.isArray(attempts) || attempts.length === 0) return 'no attempt details';
+  if (!Array.isArray(attempts) || attempts.length === 0) return 'none';
   const counts = new Map();
   for (const attempt of attempts) {
     const reason = String(attempt?.reason || 'unknown');
@@ -37,6 +43,57 @@ function latestModelFromAttempts(attempts) {
   if (!Array.isArray(attempts) || attempts.length === 0) return null;
   const latest = attempts[attempts.length - 1];
   return latest?.model || null;
+}
+
+function toFailedModelAttempts(attempts) {
+  if (!Array.isArray(attempts) || attempts.length === 0) return [];
+  return attempts
+    .map((attempt) => {
+      const model = typeof attempt?.model === 'string' && attempt.model.trim() ? attempt.model.trim() : 'unknown';
+      const reason = typeof attempt?.reason === 'string' && attempt.reason.trim() ? attempt.reason.trim() : 'unknown';
+      const normalized = { model, reason };
+      if (Number.isFinite(Number(attempt?.status))) {
+        normalized.status = Number(attempt.status);
+      }
+      const detail = String(attempt?.detail || '').trim();
+      if (detail) {
+        normalized.detail = detail.slice(0, 280);
+      }
+      return normalized;
+    })
+    .filter((attempt) => attempt.reason !== 'none');
+}
+
+function mergeAttempts(...attemptGroups) {
+  return attemptGroups.flatMap((group) => (Array.isArray(group) ? group : []));
+}
+
+function detectResponseMode(history) {
+  const hasAssistantTurn = Array.isArray(history) && history.some((item) => item?.role === 'assistant');
+  return hasAssistantTurn ? 'followup' : 'analysis';
+}
+
+function attachAttemptDetails(error, attempts) {
+  const safeAttempts = Array.isArray(attempts)
+    ? attempts
+    : Array.isArray(error?.details?.attempts)
+      ? error.details.attempts
+      : [];
+
+  if (!error) return error;
+  if (!error.details || typeof error.details !== 'object') {
+    error.details = {};
+  }
+  if (!error.details.attemptSummary) {
+    error.details.attemptSummary = summarizeAttempts(safeAttempts);
+  }
+  if (!error.details.lastModel) {
+    error.details.lastModel = latestModelFromAttempts(safeAttempts);
+  }
+  if (!Array.isArray(error.details.failedModelAttempts)) {
+    error.details.failedModelAttempts = toFailedModelAttempts(safeAttempts);
+  }
+  return error;
 }
 
 function extractValidationFailures(attempts) {
@@ -135,11 +192,18 @@ function validateFactCheckAgainstGroundTruth(validatedPayload, handContext) {
   }
 }
 
-function parseAndValidateModelContent(content, handContext) {
+function parseAndValidateModelContent(content, handContext, responseMode) {
   const parsed = parseCoachModelJson(content);
-  const validatedPayload = validateCoachModelPayload(parsed);
-  validateStreetCoverage(validatedPayload, handContext);
-  validateFactCheckAgainstGroundTruth(validatedPayload, handContext);
+  const validatedPayload =
+    responseMode === 'followup'
+      ? validateFollowupCoachModelPayload(parsed)
+      : validateInitialCoachModelPayload(parsed);
+
+  if (responseMode === 'analysis') {
+    validateStreetCoverage(validatedPayload, handContext);
+    validateFactCheckAgainstGroundTruth(validatedPayload, handContext);
+  }
+
   return validatedPayload;
 }
 
@@ -175,6 +239,7 @@ function getInvalidOutputDiagnostics(error) {
 export async function coachHand(payload, options = {}) {
   const request = validateCoachRequest(payload);
   const { history: historyWindow, truncated, windowSize } = truncateHistoryWindow(request.history, HISTORY_WINDOW_SIZE);
+  const responseMode = detectResponseMode(request.history);
 
   const handContext = buildHandContext(request.hand);
   const provider =
@@ -186,17 +251,27 @@ export async function coachHand(payload, options = {}) {
     warnings.push(`History truncated to the last ${windowSize} messages.`);
   }
 
-  const firstPassMessages = buildCoachMessages({
-    handContext,
-    history: historyWindow,
-    message: request.message,
-    historyWindowSize: windowSize,
-  });
+  const firstPassMessages =
+    responseMode === 'followup'
+      ? buildFollowupCoachMessages({
+          handContext,
+          history: historyWindow,
+          message: request.message,
+          historyWindowSize: windowSize,
+        })
+      : buildInitialCoachMessages({
+          handContext,
+          history: historyWindow,
+          message: request.message,
+          historyWindowSize: windowSize,
+        });
+
   const modelContentValidator = (content) => {
-    parseAndValidateModelContent(content, handContext);
+    parseAndValidateModelContent(content, handContext, responseMode);
   };
 
   let generation;
+  let attemptLog = [];
 
   try {
     generation = await provider.generate({
@@ -204,23 +279,36 @@ export async function coachHand(payload, options = {}) {
       timeoutMs,
       validateContent: modelContentValidator,
     });
+    attemptLog = mergeAttempts(attemptLog, generation?.attempts);
   } catch (error) {
     if (error?.code !== 'COACH_PROVIDER_OUTPUT_INVALID') {
-      throw error;
+      throw attachAttemptDetails(error, error?.details?.attempts);
     }
 
     warnings.push('Coach output required one repair retry to return valid JSON.');
     const diagnostics = getInvalidOutputDiagnostics(error);
+    const firstPassAttempts = Array.isArray(error?.details?.attempts) ? error.details.attempts : [];
 
-    const repairMessages = buildCoachRepairMessages({
-      handContext,
-      history: historyWindow,
-      message: request.message,
-      previousOutput: diagnostics.previousOutput || getInvalidOutputSnippet(error),
-      validationError: error?.message || 'Invalid JSON/schema from model.',
-      validationFailures: diagnostics.validationFailures,
-      historyWindowSize: windowSize,
-    });
+    const repairMessages =
+      responseMode === 'followup'
+        ? buildFollowupCoachRepairMessages({
+            handContext,
+            history: historyWindow,
+            message: request.message,
+            previousOutput: diagnostics.previousOutput || getInvalidOutputSnippet(error),
+            validationError: error?.message || 'Invalid JSON/schema from model.',
+            validationFailures: diagnostics.validationFailures,
+            historyWindowSize: windowSize,
+          })
+        : buildInitialCoachRepairMessages({
+            handContext,
+            history: historyWindow,
+            message: request.message,
+            previousOutput: diagnostics.previousOutput || getInvalidOutputSnippet(error),
+            validationError: error?.message || 'Invalid JSON/schema from model.',
+            validationFailures: diagnostics.validationFailures,
+            historyWindowSize: windowSize,
+          });
 
     try {
       generation = await provider.generate({
@@ -228,8 +316,9 @@ export async function coachHand(payload, options = {}) {
         timeoutMs,
         validateContent: modelContentValidator,
       });
+      attemptLog = mergeAttempts(firstPassAttempts, generation?.attempts);
     } catch (repairError) {
-      const attempts = repairError?.details?.attempts || error?.details?.attempts || [];
+      const attempts = mergeAttempts(firstPassAttempts, repairError?.details?.attempts);
       const validationFailures = extractValidationFailures(attempts);
       throw createCoachError('Coach output remained invalid after one repair retry.', {
         statusCode: 502,
@@ -239,6 +328,7 @@ export async function coachHand(payload, options = {}) {
           repairErrorCode: repairError?.code || null,
           attempts: attempts.length > 0 ? attempts : null,
           validationFailures,
+          failedModelAttempts: toFailedModelAttempts(attempts),
           attemptSummary: summarizeAttempts(attempts),
           lastModel: latestModelFromAttempts(attempts),
         },
@@ -248,23 +338,22 @@ export async function coachHand(payload, options = {}) {
 
   let parsedPayload;
   try {
-    parsedPayload = parseAndValidateModelContent(generation.content, handContext);
+    parsedPayload = parseAndValidateModelContent(generation.content, handContext, responseMode);
   } catch (error) {
-    const attempts = generation?.attempts || [];
+    const attempts = mergeAttempts(attemptLog, generation?.attempts);
     if (error?.details == null) {
       error.details = {};
     }
     if (!Array.isArray(error.details.validationFailures) || error.details.validationFailures.length === 0) {
       error.details.validationFailures = [error?.message || 'Model output failed validation.'];
     }
-    if (!error.details.attemptSummary) {
-      error.details.attemptSummary = summarizeAttempts(attempts);
+    if (!error.details.lastModel && generation?.model) {
+      error.details.lastModel = generation.model;
     }
-    if (!error.details.lastModel) {
-      error.details.lastModel = generation?.model || latestModelFromAttempts(attempts);
-    }
-    throw error;
+    throw attachAttemptDetails(error, attempts);
   }
+
+  const failedModelAttempts = toFailedModelAttempts(attemptLog);
 
   return {
     assistant: parsedPayload.assistant,
@@ -274,6 +363,9 @@ export async function coachHand(payload, options = {}) {
       fallbackUsed: Boolean(generation.fallbackUsed),
       historyWindowUsed: windowSize,
       truncatedHistory: truncated,
+      failedModelAttempts,
+      attemptSummary: summarizeAttempts(attemptLog),
+      responseMode,
     },
     warnings,
   };

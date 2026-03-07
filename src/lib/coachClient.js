@@ -26,6 +26,11 @@ function ensureStringArray(value, label) {
   return value.map((item, index) => ensureString(item, `${label}[${index}]`));
 }
 
+function ensureOptionalStringArray(value, label) {
+  if (value == null) return [];
+  return ensureStringArray(value, label);
+}
+
 function ensureEnum(value, label, allowedValues) {
   const normalized = ensureString(value, label).toLowerCase();
   if (!allowedValues.includes(normalized)) {
@@ -56,6 +61,7 @@ export function extractErrorMessage(status, statusText, payloadText) {
   const validationFailures = Array.isArray(details.validationFailures)
     ? details.validationFailures.map((item) => String(item).trim()).filter(Boolean)
     : [];
+  const failedModelAttempts = Array.isArray(details.failedModelAttempts) ? details.failedModelAttempts : [];
 
   let message;
   if (code === 'COACH_FACT_CHECK_FAILED') {
@@ -77,6 +83,19 @@ export function extractErrorMessage(status, statusText, payloadText) {
   if (details?.attemptSummary) {
     extras.push(`Attempt summary: ${details.attemptSummary}`);
   }
+  if (failedModelAttempts.length > 0) {
+    const compact = failedModelAttempts
+      .slice(0, 3)
+      .map((attempt) => {
+        const model = String(attempt?.model || 'unknown');
+        if (Number.isFinite(Number(attempt?.status))) {
+          return `${model} (${Number(attempt.status)})`;
+        }
+        return `${model} (${String(attempt?.reason || 'unknown')})`;
+      })
+      .join(', ');
+    extras.push(`Failed models: ${compact}`);
+  }
 
   return `Coach request failed: ${message}${extras.length > 0 ? ` ${extras.join(' ')}` : ''}`;
 }
@@ -84,91 +103,121 @@ export function extractErrorMessage(status, statusText, payloadText) {
 const VERDICTS = ['correct', 'mixed', 'incorrect', 'unclear'];
 const STREETS = ['preflop', 'flop', 'turn', 'river'];
 
+function normalizeFailedModelAttempts(value, label) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array.`);
+  }
+  return value.map((item, index) => {
+    const entry = ensureObject(item, `${label}[${index}]`);
+    const model = ensureString(entry.model, `${label}[${index}].model`);
+    const reason = ensureString(entry.reason, `${label}[${index}].reason`);
+    const normalized = { model, reason };
+    if (entry.status != null) {
+      const statusNumber = Number(entry.status);
+      if (!Number.isFinite(statusNumber)) {
+        throw new Error(`${label}[${index}].status must be a number when provided.`);
+      }
+      normalized.status = statusNumber;
+    }
+    if (entry.detail != null) {
+      normalized.detail = ensureString(entry.detail, `${label}[${index}].detail`);
+    }
+    return normalized;
+  });
+}
+
 export function normalizeCoachResponse(raw) {
   const body = ensureObject(raw, 'Coach response');
   const assistant = ensureObject(body.assistant, 'assistant');
-  const analysis = ensureObject(assistant.analysis, 'assistant.analysis');
   const meta = ensureObject(body.meta, 'meta');
 
-  const confidence = ensureEnum(analysis.confidence, 'assistant.analysis.confidence', ['low', 'medium', 'high']);
-  const overallVerdict = ensureEnum(analysis.overallVerdict, 'assistant.analysis.overallVerdict', VERDICTS);
-  const factCheck = ensureObject(analysis.factCheck, 'assistant.analysis.factCheck');
+  const responseMode = meta.responseMode ? ensureEnum(meta.responseMode, 'meta.responseMode', ['analysis', 'followup']) : null;
+  const inferredResponseMode = responseMode || (assistant.analysis ? 'analysis' : 'followup');
 
-  if (!Array.isArray(analysis.streetVerdicts)) {
-    throw new Error('assistant.analysis.streetVerdicts must be an array.');
+  const normalizedAssistant = {
+    content: ensureString(assistant.content, 'assistant.content'),
+  };
+
+  const followupHighlights = ensureOptionalStringArray(assistant.followupHighlights, 'assistant.followupHighlights');
+  if (followupHighlights.length > 0) {
+    normalizedAssistant.followupHighlights = followupHighlights;
   }
-  const seenStreets = new Set();
-  const streetVerdicts = analysis.streetVerdicts.map((item, index) => {
-    const entry = ensureObject(item, `assistant.analysis.streetVerdicts[${index}]`);
-    const street = ensureEnum(entry.street, `assistant.analysis.streetVerdicts[${index}].street`, STREETS);
-    if (seenStreets.has(street)) {
-      throw new Error(`assistant.analysis.streetVerdicts contains duplicate street: ${street}.`);
+
+  if (inferredResponseMode === 'analysis') {
+    const analysis = ensureObject(assistant.analysis, 'assistant.analysis');
+    const confidence = ensureEnum(analysis.confidence, 'assistant.analysis.confidence', ['low', 'medium', 'high']);
+    const overallVerdict = ensureEnum(analysis.overallVerdict, 'assistant.analysis.overallVerdict', VERDICTS);
+    const factCheck = ensureObject(analysis.factCheck, 'assistant.analysis.factCheck');
+
+    if (!Array.isArray(analysis.streetVerdicts)) {
+      throw new Error('assistant.analysis.streetVerdicts must be an array.');
     }
-    seenStreets.add(street);
+    const seenStreets = new Set();
+    const streetVerdicts = analysis.streetVerdicts.map((item, index) => {
+      const entry = ensureObject(item, `assistant.analysis.streetVerdicts[${index}]`);
+      const street = ensureEnum(entry.street, `assistant.analysis.streetVerdicts[${index}].street`, STREETS);
+      if (seenStreets.has(street)) {
+        throw new Error(`assistant.analysis.streetVerdicts contains duplicate street: ${street}.`);
+      }
+      seenStreets.add(street);
 
-    return {
-      street,
-      heroAction: ensureString(entry.heroAction, `assistant.analysis.streetVerdicts[${index}].heroAction`),
-      verdict: ensureEnum(entry.verdict, `assistant.analysis.streetVerdicts[${index}].verdict`, VERDICTS),
-      reason: ensureString(entry.reason, `assistant.analysis.streetVerdicts[${index}].reason`),
-      gtoPreferredAction: ensureString(
-        entry.gtoPreferredAction,
-        `assistant.analysis.streetVerdicts[${index}].gtoPreferredAction`
-      ),
+      return {
+        street,
+        heroAction: ensureString(entry.heroAction, `assistant.analysis.streetVerdicts[${index}].heroAction`),
+        verdict: ensureEnum(entry.verdict, `assistant.analysis.streetVerdicts[${index}].verdict`, VERDICTS),
+        reason: ensureString(entry.reason, `assistant.analysis.streetVerdicts[${index}].reason`),
+        gtoPreferredAction: ensureString(
+          entry.gtoPreferredAction,
+          `assistant.analysis.streetVerdicts[${index}].gtoPreferredAction`
+        ),
+      };
+    });
+
+    const heroCards = ensureStringArray(factCheck.heroCards, 'assistant.analysis.factCheck.heroCards');
+    if (heroCards.length !== 2) {
+      throw new Error('assistant.analysis.factCheck.heroCards must contain exactly 2 cards.');
+    }
+
+    normalizedAssistant.analysis = {
+      factCheck: {
+        heroCards,
+        heroHandCode: ensureString(factCheck.heroHandCode, 'assistant.analysis.factCheck.heroHandCode'),
+        heroPosition: ensureString(factCheck.heroPosition, 'assistant.analysis.factCheck.heroPosition'),
+        preflopLastAggressorPosition: ensureString(
+          factCheck.preflopLastAggressorPosition,
+          'assistant.analysis.factCheck.preflopLastAggressorPosition'
+        ),
+        heroWasPreflopAggressor: ensureBoolean(
+          factCheck.heroWasPreflopAggressor,
+          'assistant.analysis.factCheck.heroWasPreflopAggressor'
+        ),
+        heroCanCbetFlop: ensureBoolean(factCheck.heroCanCbetFlop, 'assistant.analysis.factCheck.heroCanCbetFlop'),
+        heroPostflopPosition: ensureEnum(
+          factCheck.heroPostflopPosition,
+          'assistant.analysis.factCheck.heroPostflopPosition',
+          ['out_of_position', 'in_position', 'unknown']
+        ),
+      },
+      overallVerdict,
+      overallReason: ensureString(analysis.overallReason, 'assistant.analysis.overallReason'),
+      streetVerdicts,
+      keyAdjustments: ensureStringArray(analysis.keyAdjustments, 'assistant.analysis.keyAdjustments'),
+      confidence,
     };
-  });
-
-  const topAlternatives = ensureStringArray(analysis.topAlternatives, 'assistant.analysis.topAlternatives');
-  if (topAlternatives.length !== 2) {
-    throw new Error('assistant.analysis.topAlternatives must contain exactly 2 items.');
-  }
-  const heroCards = ensureStringArray(factCheck.heroCards, 'assistant.analysis.factCheck.heroCards');
-  if (heroCards.length !== 2) {
-    throw new Error('assistant.analysis.factCheck.heroCards must contain exactly 2 cards.');
   }
 
   return {
-    assistant: {
-      content: ensureString(assistant.content, 'assistant.content'),
-      analysis: {
-        factCheck: {
-          heroCards,
-          heroHandCode: ensureString(factCheck.heroHandCode, 'assistant.analysis.factCheck.heroHandCode'),
-          heroPosition: ensureString(factCheck.heroPosition, 'assistant.analysis.factCheck.heroPosition'),
-          preflopLastAggressorPosition: ensureString(
-            factCheck.preflopLastAggressorPosition,
-            'assistant.analysis.factCheck.preflopLastAggressorPosition'
-          ),
-          heroWasPreflopAggressor: ensureBoolean(
-            factCheck.heroWasPreflopAggressor,
-            'assistant.analysis.factCheck.heroWasPreflopAggressor'
-          ),
-          heroCanCbetFlop: ensureBoolean(factCheck.heroCanCbetFlop, 'assistant.analysis.factCheck.heroCanCbetFlop'),
-          heroPostflopPosition: ensureEnum(
-            factCheck.heroPostflopPosition,
-            'assistant.analysis.factCheck.heroPostflopPosition',
-            ['out_of_position', 'in_position', 'unknown']
-          ),
-        },
-        overallVerdict,
-        overallReason: ensureString(analysis.overallReason, 'assistant.analysis.overallReason'),
-        streetVerdicts,
-        biggestLeaks: ensureStringArray(analysis.biggestLeaks, 'assistant.analysis.biggestLeaks'),
-        gtoCorrections: ensureStringArray(analysis.gtoCorrections, 'assistant.analysis.gtoCorrections'),
-        topAlternatives,
-        exploitativeAdjustments: ensureStringArray(
-          analysis.exploitativeAdjustments,
-          'assistant.analysis.exploitativeAdjustments'
-        ),
-        confidence,
-      },
-    },
+    assistant: normalizedAssistant,
     meta: {
       provider: ensureString(meta.provider, 'meta.provider'),
       model: ensureString(meta.model, 'meta.model'),
       fallbackUsed: Boolean(meta.fallbackUsed),
       historyWindowUsed: Number(meta.historyWindowUsed) || 0,
       truncatedHistory: Boolean(meta.truncatedHistory),
+      failedModelAttempts: normalizeFailedModelAttempts(meta.failedModelAttempts, 'meta.failedModelAttempts'),
+      attemptSummary: ensureString(String(meta.attemptSummary || 'none'), 'meta.attemptSummary'),
+      responseMode: inferredResponseMode,
     },
     warnings: Array.isArray(body.warnings) ? body.warnings.map((item) => String(item)) : [],
   };

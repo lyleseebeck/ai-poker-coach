@@ -79,37 +79,10 @@ function AnalysisDetails({ analysis }) {
       </section>
 
       <section>
-        <p className="font-medium text-slate-800">Top alternatives</p>
+        <p className="font-medium text-slate-800">Key adjustments</p>
         <ul className="mt-1 list-disc pl-5 space-y-1 text-slate-600">
-          {analysis.topAlternatives.map((item, index) => (
-            <li key={`alternative-${index}`}>{item}</li>
-          ))}
-        </ul>
-      </section>
-
-      <section>
-        <p className="font-medium text-slate-800">Biggest leaks</p>
-        <ul className="mt-1 list-disc pl-5 space-y-1 text-slate-600">
-          {analysis.biggestLeaks.map((item, index) => (
-            <li key={`leak-${index}`}>{item}</li>
-          ))}
-        </ul>
-      </section>
-
-      <section>
-        <p className="font-medium text-slate-800">GTO corrections</p>
-        <ul className="mt-1 list-disc pl-5 space-y-1 text-slate-600">
-          {analysis.gtoCorrections.map((item, index) => (
-            <li key={`gto-${index}`}>{item}</li>
-          ))}
-        </ul>
-      </section>
-
-      <section>
-        <p className="font-medium text-slate-800">Exploitative adjustments</p>
-        <ul className="mt-1 list-disc pl-5 space-y-1 text-slate-600">
-          {analysis.exploitativeAdjustments.map((item, index) => (
-            <li key={`exploit-${index}`}>{item}</li>
+          {analysis.keyAdjustments.map((item, index) => (
+            <li key={`key-adjustment-${index}`}>{item}</li>
           ))}
         </ul>
       </section>
@@ -196,6 +169,7 @@ export function CoachPanel({ hands }) {
         role: 'assistant',
         content: response.assistant.content,
         analysis: response.assistant.analysis,
+        followupHighlights: response.assistant.followupHighlights || [],
         meta: response.meta,
         warnings: response.warnings || [],
       };
@@ -259,6 +233,16 @@ export function CoachPanel({ hands }) {
                     <p className="text-slate-800 font-medium">Coach summary</p>
                     <p className="mt-1 text-slate-700">{entry.content}</p>
                     {entry.analysis && <AnalysisDetails analysis={entry.analysis} />}
+                    {!entry.analysis && Array.isArray(entry.followupHighlights) && entry.followupHighlights.length > 0 && (
+                      <div className="mt-3">
+                        <p className="font-medium text-slate-800">Followup highlights</p>
+                        <ul className="mt-1 list-disc pl-5 space-y-1 text-slate-600">
+                          {entry.followupHighlights.map((item, index) => (
+                            <li key={`followup-${entry.id}-${index}`}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                     {Array.isArray(entry.warnings) && entry.warnings.length > 0 && (
                       <ul className="mt-2 list-disc pl-5 text-xs text-amber-700 space-y-1">
                         {entry.warnings.map((warning, index) => (
@@ -267,11 +251,30 @@ export function CoachPanel({ hands }) {
                       </ul>
                     )}
                     {entry.meta && (
-                      <p className="mt-3 text-xs text-slate-500">
-                        Model: {entry.meta.model} ({entry.meta.provider})
-                        {entry.meta.fallbackUsed ? ' · fallback used' : ''}
-                        {entry.meta.truncatedHistory ? ` · last ${entry.meta.historyWindowUsed} messages` : ''}
-                      </p>
+                      <div className="mt-3 space-y-1 text-xs text-slate-500">
+                        <p>
+                          Model: {entry.meta.model} ({entry.meta.provider})
+                          {entry.meta.fallbackUsed ? ' · fallback used' : ''}
+                          {entry.meta.truncatedHistory ? ` · last ${entry.meta.historyWindowUsed} messages` : ''}
+                          {entry.meta.responseMode ? ` · ${entry.meta.responseMode}` : ''}
+                        </p>
+                        {Array.isArray(entry.meta.failedModelAttempts) && entry.meta.failedModelAttempts.length > 0 && (
+                          <p>
+                            Fallback attempts:{' '}
+                            {entry.meta.failedModelAttempts
+                              .map((attempt) => {
+                                const statusLabel = Number.isFinite(Number(attempt?.status))
+                                  ? Number(attempt.status)
+                                  : attempt?.reason || 'unknown';
+                                return `${attempt.model} (${statusLabel})`;
+                              })
+                              .join(', ')}
+                          </p>
+                        )}
+                        {entry.meta.attemptSummary && entry.meta.attemptSummary !== 'none' && (
+                          <p>Attempt summary: {entry.meta.attemptSummary}</p>
+                        )}
+                      </div>
                     )}
                   </div>
                 );
