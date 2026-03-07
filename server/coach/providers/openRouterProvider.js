@@ -156,7 +156,7 @@ export function createOpenRouterProvider(options = {}) {
             body: JSON.stringify({
               model,
               messages,
-              temperature: 0.2,
+              temperature: 0,
             }),
             signal: signalState.signal,
           });
@@ -213,6 +213,10 @@ export function createOpenRouterProvider(options = {}) {
                 model,
                 reason: 'invalid_output',
                 detail: error?.message || 'Model output failed schema validation.',
+                errorCode: error?.code || null,
+                validationFailures: Array.isArray(error?.details?.validationFailures)
+                  ? error.details.validationFailures.map((item) => String(item))
+                  : null,
                 contentSnippet: content.slice(0, 800),
               });
               continue;
@@ -248,7 +252,7 @@ export function createOpenRouterProvider(options = {}) {
       throw createCoachError(`OpenRouter free models were exhausted. Attempt summary: ${attemptSummary}`, {
         statusCode: 502,
         code: hasInvalidOutput ? 'COACH_PROVIDER_OUTPUT_INVALID' : 'COACH_PROVIDER_EXHAUSTED',
-        details: { attempts },
+        details: { attempts, attemptSummary, lastModel: attempts.length > 0 ? attempts[attempts.length - 1].model || null : null },
       });
     },
   };
