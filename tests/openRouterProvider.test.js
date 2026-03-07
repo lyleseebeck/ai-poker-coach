@@ -28,7 +28,7 @@ test('openRouter provider falls back to next free model on retryable status', as
     if (callCount === 1) {
       return makeResponse(429, { error: { message: 'rate limit' } });
     }
-    return makeResponse(200, makeChoiceContent('{"assistant":{"content":"ok","analysis":{"situationSummary":"x","biggestLeaks":[],"gtoCorrections":[],"streetPlan":{"preflop":"x","flop":"x","turn":"x","river":"x"},"exploitativeAdjustments":[],"practiceDrills":[],"nextSessionFocus":"x","confidence":"low","assumptions":[]}}}'));
+    return makeResponse(200, makeChoiceContent('{"assistant":{"content":"ok","analysis":{"overallVerdict":"mixed","overallReason":"x","streetVerdicts":[{"street":"preflop","heroAction":"call","verdict":"mixed","reason":"x","gtoPreferredAction":"x"}],"biggestLeaks":[],"gtoCorrections":[],"topAlternatives":["x","y"],"exploitativeAdjustments":[],"confidence":"low"}}}'));
   };
 
   const provider = createOpenRouterProvider({

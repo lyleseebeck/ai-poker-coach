@@ -4,6 +4,8 @@ export const HISTORY_WINDOW_SIZE = 8;
 export const MAX_MESSAGE_LENGTH = 2000;
 export const MAX_HISTORY_CONTENT_LENGTH = 2000;
 export const MAX_HISTORY_ITEMS = 40;
+export const COACH_VERDICTS = ['correct', 'mixed', 'incorrect', 'unclear'];
+export const COACH_STREETS = ['preflop', 'flop', 'turn', 'river'];
 
 function isPlainObject(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -41,6 +43,17 @@ function requireStringArray(value, label, maxItemLength, statusCode = 500) {
   return value.map((item, index) =>
     requireStringField(item, `${label}[${index}]`, maxItemLength, statusCode)
   );
+}
+
+function requireEnumField(value, label, allowedValues, statusCode = 500) {
+  const normalized = requireStringField(value, label, 120, statusCode).toLowerCase();
+  if (!allowedValues.includes(normalized)) {
+    throw createCoachError(`${label} must be one of: ${allowedValues.join(', ')}.`, {
+      statusCode,
+      code: 'COACH_MODEL_SCHEMA_INVALID',
+    });
+  }
+  return normalized;
 }
 
 function extractJsonCandidate(rawText) {
@@ -194,17 +207,76 @@ export function validateCoachModelPayload(payload) {
     });
   }
 
-  const streetPlanRaw = analysis.streetPlan;
-  if (!isPlainObject(streetPlanRaw)) {
-    throw createCoachError('assistant.analysis.streetPlan must be an object.', {
+  const confidence = requireEnumField(analysis.confidence, 'assistant.analysis.confidence', ['low', 'medium', 'high'], 502);
+  const overallVerdict = requireEnumField(
+    analysis.overallVerdict,
+    'assistant.analysis.overallVerdict',
+    COACH_VERDICTS,
+    502
+  );
+
+  const streetVerdictsRaw = analysis.streetVerdicts;
+  if (!Array.isArray(streetVerdictsRaw)) {
+    throw createCoachError('assistant.analysis.streetVerdicts must be an array.', {
       statusCode: 502,
       code: 'COACH_MODEL_SCHEMA_INVALID',
     });
   }
+  const seenStreets = new Set();
+  const streetVerdicts = streetVerdictsRaw.map((item, index) => {
+    if (!isPlainObject(item)) {
+      throw createCoachError(`assistant.analysis.streetVerdicts[${index}] must be an object.`, {
+        statusCode: 502,
+        code: 'COACH_MODEL_SCHEMA_INVALID',
+      });
+    }
 
-  const confidence = readTrimmedString(analysis.confidence).toLowerCase();
-  if (!['low', 'medium', 'high'].includes(confidence)) {
-    throw createCoachError('assistant.analysis.confidence must be one of: low, medium, high.', {
+    const street = requireEnumField(
+      item.street,
+      `assistant.analysis.streetVerdicts[${index}].street`,
+      COACH_STREETS,
+      502
+    );
+    if (seenStreets.has(street)) {
+      throw createCoachError(`assistant.analysis.streetVerdicts contains duplicate street: ${street}.`, {
+        statusCode: 502,
+        code: 'COACH_MODEL_SCHEMA_INVALID',
+      });
+    }
+    seenStreets.add(street);
+
+    return {
+      street,
+      heroAction: requireStringField(
+        item.heroAction,
+        `assistant.analysis.streetVerdicts[${index}].heroAction`,
+        500,
+        502
+      ),
+      verdict: requireEnumField(
+        item.verdict,
+        `assistant.analysis.streetVerdicts[${index}].verdict`,
+        COACH_VERDICTS,
+        502
+      ),
+      reason: requireStringField(item.reason, `assistant.analysis.streetVerdicts[${index}].reason`, 1800, 502),
+      gtoPreferredAction: requireStringField(
+        item.gtoPreferredAction,
+        `assistant.analysis.streetVerdicts[${index}].gtoPreferredAction`,
+        600,
+        502
+      ),
+    };
+  });
+
+  const topAlternatives = requireStringArray(
+    analysis.topAlternatives,
+    'assistant.analysis.topAlternatives',
+    1200,
+    502
+  );
+  if (topAlternatives.length !== 2) {
+    throw createCoachError('assistant.analysis.topAlternatives must contain exactly 2 items.', {
       statusCode: 502,
       code: 'COACH_MODEL_SCHEMA_INVALID',
     });
@@ -214,25 +286,19 @@ export function validateCoachModelPayload(payload) {
     assistant: {
       content,
       analysis: {
-        situationSummary: requireStringField(analysis.situationSummary, 'assistant.analysis.situationSummary', 4000, 502),
+        overallVerdict,
+        overallReason: requireStringField(analysis.overallReason, 'assistant.analysis.overallReason', 4000, 502),
+        streetVerdicts,
         biggestLeaks: requireStringArray(analysis.biggestLeaks, 'assistant.analysis.biggestLeaks', 1200, 502),
         gtoCorrections: requireStringArray(analysis.gtoCorrections, 'assistant.analysis.gtoCorrections', 1200, 502),
-        streetPlan: {
-          preflop: requireStringField(streetPlanRaw.preflop, 'assistant.analysis.streetPlan.preflop', 1200, 502),
-          flop: requireStringField(streetPlanRaw.flop, 'assistant.analysis.streetPlan.flop', 1200, 502),
-          turn: requireStringField(streetPlanRaw.turn, 'assistant.analysis.streetPlan.turn', 1200, 502),
-          river: requireStringField(streetPlanRaw.river, 'assistant.analysis.streetPlan.river', 1200, 502),
-        },
+        topAlternatives,
         exploitativeAdjustments: requireStringArray(
           analysis.exploitativeAdjustments,
           'assistant.analysis.exploitativeAdjustments',
           1200,
           502
         ),
-        practiceDrills: requireStringArray(analysis.practiceDrills, 'assistant.analysis.practiceDrills', 1200, 502),
-        nextSessionFocus: requireStringField(analysis.nextSessionFocus, 'assistant.analysis.nextSessionFocus', 1200, 502),
         confidence,
-        assumptions: requireStringArray(analysis.assumptions, 'assistant.analysis.assumptions', 1200, 502),
       },
     },
   };

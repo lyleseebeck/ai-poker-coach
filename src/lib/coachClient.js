@@ -19,6 +19,14 @@ function ensureStringArray(value, label) {
   return value.map((item, index) => ensureString(item, `${label}[${index}]`));
 }
 
+function ensureEnum(value, label, allowedValues) {
+  const normalized = ensureString(value, label).toLowerCase();
+  if (!allowedValues.includes(normalized)) {
+    throw new Error(`${label} must be one of: ${allowedValues.join(', ')}.`);
+  }
+  return normalized;
+}
+
 function parseJsonSafely(text) {
   if (!text) return null;
   try {
@@ -38,39 +46,62 @@ function extractErrorMessage(status, statusText, payloadText) {
   return `Coach request failed: ${detail}`;
 }
 
-function normalizeCoachResponse(raw) {
+const VERDICTS = ['correct', 'mixed', 'incorrect', 'unclear'];
+const STREETS = ['preflop', 'flop', 'turn', 'river'];
+
+export function normalizeCoachResponse(raw) {
   const body = ensureObject(raw, 'Coach response');
   const assistant = ensureObject(body.assistant, 'assistant');
   const analysis = ensureObject(assistant.analysis, 'assistant.analysis');
-  const streetPlan = ensureObject(analysis.streetPlan, 'assistant.analysis.streetPlan');
   const meta = ensureObject(body.meta, 'meta');
 
-  const confidence = ensureString(analysis.confidence, 'assistant.analysis.confidence').toLowerCase();
-  if (!['low', 'medium', 'high'].includes(confidence)) {
-    throw new Error('assistant.analysis.confidence must be one of low, medium, high.');
+  const confidence = ensureEnum(analysis.confidence, 'assistant.analysis.confidence', ['low', 'medium', 'high']);
+  const overallVerdict = ensureEnum(analysis.overallVerdict, 'assistant.analysis.overallVerdict', VERDICTS);
+
+  if (!Array.isArray(analysis.streetVerdicts)) {
+    throw new Error('assistant.analysis.streetVerdicts must be an array.');
+  }
+  const seenStreets = new Set();
+  const streetVerdicts = analysis.streetVerdicts.map((item, index) => {
+    const entry = ensureObject(item, `assistant.analysis.streetVerdicts[${index}]`);
+    const street = ensureEnum(entry.street, `assistant.analysis.streetVerdicts[${index}].street`, STREETS);
+    if (seenStreets.has(street)) {
+      throw new Error(`assistant.analysis.streetVerdicts contains duplicate street: ${street}.`);
+    }
+    seenStreets.add(street);
+
+    return {
+      street,
+      heroAction: ensureString(entry.heroAction, `assistant.analysis.streetVerdicts[${index}].heroAction`),
+      verdict: ensureEnum(entry.verdict, `assistant.analysis.streetVerdicts[${index}].verdict`, VERDICTS),
+      reason: ensureString(entry.reason, `assistant.analysis.streetVerdicts[${index}].reason`),
+      gtoPreferredAction: ensureString(
+        entry.gtoPreferredAction,
+        `assistant.analysis.streetVerdicts[${index}].gtoPreferredAction`
+      ),
+    };
+  });
+
+  const topAlternatives = ensureStringArray(analysis.topAlternatives, 'assistant.analysis.topAlternatives');
+  if (topAlternatives.length !== 2) {
+    throw new Error('assistant.analysis.topAlternatives must contain exactly 2 items.');
   }
 
   return {
     assistant: {
       content: ensureString(assistant.content, 'assistant.content'),
       analysis: {
-        situationSummary: ensureString(analysis.situationSummary, 'assistant.analysis.situationSummary'),
+        overallVerdict,
+        overallReason: ensureString(analysis.overallReason, 'assistant.analysis.overallReason'),
+        streetVerdicts,
         biggestLeaks: ensureStringArray(analysis.biggestLeaks, 'assistant.analysis.biggestLeaks'),
         gtoCorrections: ensureStringArray(analysis.gtoCorrections, 'assistant.analysis.gtoCorrections'),
-        streetPlan: {
-          preflop: ensureString(streetPlan.preflop, 'assistant.analysis.streetPlan.preflop'),
-          flop: ensureString(streetPlan.flop, 'assistant.analysis.streetPlan.flop'),
-          turn: ensureString(streetPlan.turn, 'assistant.analysis.streetPlan.turn'),
-          river: ensureString(streetPlan.river, 'assistant.analysis.streetPlan.river'),
-        },
+        topAlternatives,
         exploitativeAdjustments: ensureStringArray(
           analysis.exploitativeAdjustments,
           'assistant.analysis.exploitativeAdjustments'
         ),
-        practiceDrills: ensureStringArray(analysis.practiceDrills, 'assistant.analysis.practiceDrills'),
-        nextSessionFocus: ensureString(analysis.nextSessionFocus, 'assistant.analysis.nextSessionFocus'),
         confidence,
-        assumptions: ensureStringArray(analysis.assumptions, 'assistant.analysis.assumptions'),
       },
     },
     meta: {

@@ -30,20 +30,32 @@ function makeValidModelPayload() {
     assistant: {
       content: 'You over-defended preflop and over-bluffed turn.',
       analysis: {
-        situationSummary: 'Single-raised pot where you reached river with capped range.',
+        overallVerdict: 'mixed',
+        overallReason: 'Preflop is standard, but the flop line gives up too much EV.',
+        streetVerdicts: [
+          {
+            street: 'preflop',
+            heroAction: 'Called versus open',
+            verdict: 'correct',
+            reason: 'This defend appears within baseline range at this stack depth.',
+            gtoPreferredAction: 'Mostly call, occasional low-frequency 3-bet mix.',
+          },
+          {
+            street: 'flop',
+            heroAction: 'Checked back',
+            verdict: 'incorrect',
+            reason: 'Your range keeps enough advantage to c-bet more often.',
+            gtoPreferredAction: 'Use a small c-bet at high frequency.',
+          },
+        ],
         biggestLeaks: ['Calling too wide preflop'],
         gtoCorrections: ['Fold more offsuit broadways versus early opens.'],
-        streetPlan: {
-          preflop: 'Tighten defend frequency.',
-          flop: 'Check more medium-strength bluff-catchers.',
-          turn: 'Reduce bluff density on bad turns.',
-          river: 'Use clearer value/bluff splits based on blockers.',
-        },
+        topAlternatives: [
+          'Flop: bet one-third pot with range advantage and backdoor equity.',
+          'Turn: after check-back flop, value-bet thinner and reduce bluff density.',
+        ],
         exploitativeAdjustments: ['Versus this pool, overfold river bluff-catchers without blockers.'],
-        practiceDrills: ['Run 20 BB BTN vs BB SRP turn nodes in solver.'],
-        nextSessionFocus: 'Preflop defend thresholds by position.',
         confidence: 'medium',
-        assumptions: ['Assuming villain opens standard ranges for 6-max cash.'],
       },
     },
   };
@@ -126,16 +138,42 @@ test('parseCoachModelJson accepts fenced JSON', () => {
 test('validateCoachModelPayload accepts valid model shape', () => {
   const parsed = validateCoachModelPayload(makeValidModelPayload());
   assert.equal(parsed.assistant.analysis.confidence, 'medium');
+  assert.equal(parsed.assistant.analysis.overallVerdict, 'mixed');
 });
 
 test('validateCoachModelPayload rejects missing required fields', () => {
   const invalid = makeValidModelPayload();
-  delete invalid.assistant.analysis.streetPlan.turn;
-  assert.throws(() => validateCoachModelPayload(invalid), /streetPlan\.turn is required/i);
+  delete invalid.assistant.analysis.overallReason;
+  assert.throws(() => validateCoachModelPayload(invalid), /overallReason is required/i);
 });
 
 test('validateCoachModelPayload rejects bad field type', () => {
   const invalid = makeValidModelPayload();
   invalid.assistant.analysis.biggestLeaks = 'not-an-array';
   assert.throws(() => validateCoachModelPayload(invalid), /biggestLeaks must be an array/i);
+});
+
+test('validateCoachModelPayload rejects duplicate street verdicts', () => {
+  const invalid = makeValidModelPayload();
+  invalid.assistant.analysis.streetVerdicts.push({
+    street: 'flop',
+    heroAction: 'Second flop action',
+    verdict: 'mixed',
+    reason: 'Duplicate street.',
+    gtoPreferredAction: 'Use one verdict per street.',
+  });
+
+  assert.throws(() => validateCoachModelPayload(invalid), /duplicate street/i);
+});
+
+test('validateCoachModelPayload rejects invalid verdict enum', () => {
+  const invalid = makeValidModelPayload();
+  invalid.assistant.analysis.overallVerdict = 'great';
+  assert.throws(() => validateCoachModelPayload(invalid), /overallVerdict must be one of/i);
+});
+
+test('validateCoachModelPayload enforces exactly two top alternatives', () => {
+  const invalid = makeValidModelPayload();
+  invalid.assistant.analysis.topAlternatives = ['Only one'];
+  assert.throws(() => validateCoachModelPayload(invalid), /topAlternatives must contain exactly 2 items/i);
 });

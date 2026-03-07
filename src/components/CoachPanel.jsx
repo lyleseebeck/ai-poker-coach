@@ -27,12 +27,64 @@ function makeMessageId() {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function toTitleCase(value) {
+  const text = String(value || '').trim();
+  if (!text) return 'Unknown';
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function verdictClasses(verdict) {
+  switch (verdict) {
+    case 'correct':
+      return 'bg-emerald-100 text-emerald-700 border border-emerald-200';
+    case 'mixed':
+      return 'bg-amber-100 text-amber-700 border border-amber-200';
+    case 'incorrect':
+      return 'bg-rose-100 text-rose-700 border border-rose-200';
+    default:
+      return 'bg-slate-100 text-slate-700 border border-slate-200';
+  }
+}
+
 function AnalysisDetails({ analysis }) {
   return (
     <div className="mt-3 space-y-3 text-sm text-slate-700">
       <section>
-        <p className="font-medium text-slate-800">Situation summary</p>
-        <p className="mt-1 text-slate-600">{analysis.situationSummary}</p>
+        <p className="font-medium text-slate-800">Overall verdict</p>
+        <div className="mt-1 flex items-center gap-2">
+          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${verdictClasses(analysis.overallVerdict)}`}>
+            {analysis.overallVerdict}
+          </span>
+        </div>
+        <p className="mt-2 text-slate-600">{analysis.overallReason}</p>
+      </section>
+
+      <section>
+        <p className="font-medium text-slate-800">Per-street review</p>
+        <div className="mt-1 space-y-2">
+          {analysis.streetVerdicts.map((item, index) => (
+            <div key={`street-${item.street}-${index}`} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-medium text-slate-700">{toTitleCase(item.street)}</p>
+                <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${verdictClasses(item.verdict)}`}>
+                  {item.verdict}
+                </span>
+              </div>
+              <p className="mt-1 text-slate-600"><span className="font-medium text-slate-700">Your action:</span> {item.heroAction}</p>
+              <p className="mt-1 text-slate-600"><span className="font-medium text-slate-700">Why:</span> {item.reason}</p>
+              <p className="mt-1 text-slate-600"><span className="font-medium text-slate-700">GTO prefers:</span> {item.gtoPreferredAction}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <p className="font-medium text-slate-800">Top alternatives</p>
+        <ul className="mt-1 list-disc pl-5 space-y-1 text-slate-600">
+          {analysis.topAlternatives.map((item, index) => (
+            <li key={`alternative-${index}`}>{item}</li>
+          ))}
+        </ul>
       </section>
 
       <section>
@@ -54,43 +106,10 @@ function AnalysisDetails({ analysis }) {
       </section>
 
       <section>
-        <p className="font-medium text-slate-800">Street plan</p>
-        <div className="mt-1 grid gap-1 text-slate-600 sm:grid-cols-2">
-          <p><span className="font-medium text-slate-700">Preflop:</span> {analysis.streetPlan.preflop}</p>
-          <p><span className="font-medium text-slate-700">Flop:</span> {analysis.streetPlan.flop}</p>
-          <p><span className="font-medium text-slate-700">Turn:</span> {analysis.streetPlan.turn}</p>
-          <p><span className="font-medium text-slate-700">River:</span> {analysis.streetPlan.river}</p>
-        </div>
-      </section>
-
-      <section>
         <p className="font-medium text-slate-800">Exploitative adjustments</p>
         <ul className="mt-1 list-disc pl-5 space-y-1 text-slate-600">
           {analysis.exploitativeAdjustments.map((item, index) => (
             <li key={`exploit-${index}`}>{item}</li>
-          ))}
-        </ul>
-      </section>
-
-      <section>
-        <p className="font-medium text-slate-800">Practice drills</p>
-        <ul className="mt-1 list-disc pl-5 space-y-1 text-slate-600">
-          {analysis.practiceDrills.map((item, index) => (
-            <li key={`drill-${index}`}>{item}</li>
-          ))}
-        </ul>
-      </section>
-
-      <section>
-        <p className="font-medium text-slate-800">Next session focus</p>
-        <p className="mt-1 text-slate-600">{analysis.nextSessionFocus}</p>
-      </section>
-
-      <section>
-        <p className="font-medium text-slate-800">Assumptions</p>
-        <ul className="mt-1 list-disc pl-5 space-y-1 text-slate-600">
-          {analysis.assumptions.map((item, index) => (
-            <li key={`assumption-${index}`}>{item}</li>
           ))}
         </ul>
       </section>

@@ -11,6 +11,7 @@ import { createCoachError } from './errors.js';
 import { getLlmProvider } from './providers/index.js';
 
 const DEFAULT_TIMEOUT_MS = 25000;
+const STREET_ORDER = ['preflop', 'flop', 'turn', 'river'];
 
 function parseTimeoutMs(value) {
   const n = Number(value);
@@ -18,14 +19,46 @@ function parseTimeoutMs(value) {
   return Math.min(Math.max(Math.round(n), 1000), 120000);
 }
 
-function modelContentValidator(content) {
-  const parsed = parseCoachModelJson(content);
-  validateCoachModelPayload(parsed);
+function getRequiredStreetVerdictSet(handContext) {
+  const required = new Set();
+  const heroStreetSummary = handContext?.heroStreetSummary || {};
+
+  for (const street of STREET_ORDER) {
+    const summary = heroStreetSummary[street];
+    const action = typeof summary?.action === 'string' ? summary.action.trim().toLowerCase() : '';
+    if (action && action !== 'none') {
+      required.add(street);
+    }
+  }
+
+  return required;
 }
 
-function parseAndValidateModelContent(content) {
+function validateStreetCoverage(validatedPayload, handContext) {
+  const required = getRequiredStreetVerdictSet(handContext);
+  if (required.size === 0) {
+    return;
+  }
+
+  const provided = new Set(validatedPayload?.assistant?.analysis?.streetVerdicts?.map((item) => item.street));
+  const missing = Array.from(required).filter((street) => !provided.has(street));
+  if (missing.length > 0) {
+    throw createCoachError(
+      `assistant.analysis.streetVerdicts must include acted streets: ${missing.join(', ')}.`,
+      {
+        statusCode: 502,
+        code: 'COACH_MODEL_SCHEMA_INVALID',
+        details: { missingStreets: missing },
+      }
+    );
+  }
+}
+
+function parseAndValidateModelContent(content, handContext) {
   const parsed = parseCoachModelJson(content);
-  return validateCoachModelPayload(parsed);
+  const validatedPayload = validateCoachModelPayload(parsed);
+  validateStreetCoverage(validatedPayload, handContext);
+  return validatedPayload;
 }
 
 function getInvalidOutputSnippet(error) {
@@ -56,6 +89,9 @@ export async function coachHand(payload, options = {}) {
     message: request.message,
     historyWindowSize: windowSize,
   });
+  const modelContentValidator = (content) => {
+    parseAndValidateModelContent(content, handContext);
+  };
 
   let generation;
   let usedRepairRetry = false;
@@ -102,7 +138,7 @@ export async function coachHand(payload, options = {}) {
     }
   }
 
-  const parsedPayload = parseAndValidateModelContent(generation.content);
+  const parsedPayload = parseAndValidateModelContent(generation.content, handContext);
 
   return {
     assistant: parsedPayload.assistant,

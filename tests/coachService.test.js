@@ -9,20 +9,29 @@ function makeValidModelOutput(summary = 'Default summary') {
     assistant: {
       content: 'Accessible coaching summary for this hand.',
       analysis: {
-        situationSummary: summary,
+        overallVerdict: 'mixed',
+        overallReason: summary,
+        streetVerdicts: [
+          {
+            street: 'preflop',
+            heroAction: 'Called open',
+            verdict: 'correct',
+            reason: 'Defend is acceptable.',
+            gtoPreferredAction: 'Mostly call with this combo.',
+          },
+          {
+            street: 'flop',
+            heroAction: 'Folded',
+            verdict: 'mixed',
+            reason: 'Fold can be fine but may overfold versus small sizing.',
+            gtoPreferredAction: 'Continue more often versus small bets.',
+          },
+        ],
         biggestLeaks: ['Leak example'],
         gtoCorrections: ['Correction example'],
-        streetPlan: {
-          preflop: 'Preflop plan',
-          flop: 'Flop plan',
-          turn: 'Turn plan',
-          river: 'River plan',
-        },
+        topAlternatives: ['Alternative line 1', 'Alternative line 2'],
         exploitativeAdjustments: ['Exploit adjustment'],
-        practiceDrills: ['Practice drill'],
-        nextSessionFocus: 'Next session focus',
         confidence: 'medium',
-        assumptions: ['Assumption example'],
       },
     },
   });
@@ -80,7 +89,7 @@ test('coachHand returns structured response and truncates history window', async
     timeoutMs: 1000,
   });
 
-  assert.equal(response.assistant.analysis.situationSummary, 'Truncation test summary');
+  assert.equal(response.assistant.analysis.overallReason, 'Truncation test summary');
   assert.equal(response.meta.historyWindowUsed, HISTORY_WINDOW_SIZE);
   assert.equal(response.meta.truncatedHistory, true);
   assert.equal(response.meta.model, 'provider/model:free');
@@ -125,7 +134,7 @@ test('coachHand performs one repair retry when model output is invalid', async (
   const response = await coachHand(makePayload(2), { provider });
 
   assert.equal(callCount, 2);
-  assert.equal(response.assistant.analysis.situationSummary, 'Repair path summary');
+  assert.equal(response.assistant.analysis.overallReason, 'Repair path summary');
   assert.equal(response.meta.fallbackUsed, true);
   assert.ok(response.warnings.some((warning) => /repair retry/i.test(warning)));
 });
@@ -149,4 +158,45 @@ test('coachHand returns structured 502 when repair retry also fails', async () =
     (error) => error?.code === 'COACH_REPAIR_FAILED' && Number(error?.statusCode) === 502
   );
   assert.equal(callCount, 2);
+});
+
+test('coachHand rejects model output that omits acted streets from street verdicts', async () => {
+  const provider = {
+    name: 'openrouter',
+    async generate() {
+      return {
+        provider: 'openrouter',
+        model: 'provider/model:free',
+        fallbackUsed: false,
+        content: JSON.stringify({
+          assistant: {
+            content: 'Summary',
+            analysis: {
+              overallVerdict: 'mixed',
+              overallReason: 'Missing acted-street verdict.',
+              streetVerdicts: [
+                {
+                  street: 'preflop',
+                  heroAction: 'Called open',
+                  verdict: 'correct',
+                  reason: 'Fine defend.',
+                  gtoPreferredAction: 'Mostly call.',
+                },
+              ],
+              biggestLeaks: ['Leak example'],
+              gtoCorrections: ['Correction example'],
+              topAlternatives: ['Alt 1', 'Alt 2'],
+              exploitativeAdjustments: ['Exploit adjustment'],
+              confidence: 'low',
+            },
+          },
+        }),
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => coachHand(makePayload(0), { provider }),
+    (error) => error?.code === 'COACH_MODEL_SCHEMA_INVALID' && Number(error?.statusCode) === 502
+  );
 });

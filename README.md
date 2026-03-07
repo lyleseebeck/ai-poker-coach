@@ -41,13 +41,13 @@ Core features:
 
 ---
 
-## Coach feature (v1)
+## Coach feature (v2 verdict-first)
 
 - In the **Coach** section, select a saved hand from the dropdown.
 - Enter a question/prompt and submit.
 - The app sends the selected hand plus your prompt to `/api/coach-hand`.
 - The backend applies a master coaching prompt and calls OpenRouter with free-model fallback.
-- Responses are strict JSON, rendered in structured sections on the frontend.
+- Responses are strict JSON with verdict-first analysis, rendered in structured sections on the frontend.
 - Chat is **ephemeral** (not persisted) and context is limited to the **last 8 messages**.
 
 ---
@@ -95,20 +95,22 @@ Response:
   "assistant": {
     "content": "string",
     "analysis": {
-      "situationSummary": "string",
+      "overallVerdict": "correct",
+      "overallReason": "string",
+      "streetVerdicts": [
+        {
+          "street": "preflop",
+          "heroAction": "string",
+          "verdict": "correct",
+          "reason": "string",
+          "gtoPreferredAction": "string"
+        }
+      ],
       "biggestLeaks": ["string"],
       "gtoCorrections": ["string"],
-      "streetPlan": {
-        "preflop": "string",
-        "flop": "string",
-        "turn": "string",
-        "river": "string"
-      },
+      "topAlternatives": ["string", "string"],
       "exploitativeAdjustments": ["string"],
-      "practiceDrills": ["string"],
-      "nextSessionFocus": "string",
-      "confidence": "low",
-      "assumptions": ["string"]
+      "confidence": "low"
     }
   },
   "meta": {
@@ -121,6 +123,12 @@ Response:
   "warnings": []
 }
 ```
+
+Verdict rules:
+- `overallVerdict` and `streetVerdicts[].verdict` are limited to `correct|mixed|incorrect|unclear`.
+- `streetVerdicts` must include every street where hero took an action.
+- `topAlternatives` must contain exactly 2 items.
+- Removed fields: `assumptions`, `nextSessionFocus`, `practiceDrills`, `streetPlan`.
 
 ---
 
