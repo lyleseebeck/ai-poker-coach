@@ -12,6 +12,13 @@ function ensureString(value, label) {
   return value.trim();
 }
 
+function ensureBoolean(value, label) {
+  if (typeof value !== 'boolean') {
+    throw new Error(`${label} must be a boolean.`);
+  }
+  return value;
+}
+
 function ensureStringArray(value, label) {
   if (!Array.isArray(value)) {
     throw new Error(`${label} must be an array.`);
@@ -36,14 +43,42 @@ function parseJsonSafely(text) {
   }
 }
 
-function extractErrorMessage(status, statusText, payloadText) {
+export function extractErrorMessage(status, statusText, payloadText) {
   const payloadJson = parseJsonSafely(payloadText);
-  const detail =
-    payloadJson?.error?.message ||
-    payloadJson?.message ||
-    payloadText ||
-    `${status} ${statusText}`;
-  return `Coach request failed: ${detail}`;
+  const errorObj = payloadJson?.error || null;
+  if (!errorObj) {
+    const detail = payloadJson?.message || payloadText || `${status} ${statusText}`;
+    return `Coach request failed: ${detail}`;
+  }
+
+  const code = String(errorObj.code || '');
+  const details = errorObj?.details || {};
+  const validationFailures = Array.isArray(details.validationFailures)
+    ? details.validationFailures.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+
+  let message;
+  if (code === 'COACH_FACT_CHECK_FAILED') {
+    message = 'Coach response failed fact-check (position/action legality mismatch).';
+  } else if (code === 'COACH_LEGALITY_FAILED') {
+    message = 'Coach response failed legality checks for this hand.';
+  } else if (code === 'COACH_CONSISTENCY_FAILED') {
+    message = 'Coach response failed consistency checks for this hand.';
+  } else if (code === 'COACH_REPAIR_FAILED') {
+    message = 'Coach response was invalid after one repair retry.';
+  } else {
+    message = errorObj.message || payloadJson?.message || payloadText || `${status} ${statusText}`;
+  }
+
+  const extras = [];
+  if (validationFailures.length > 0) {
+    extras.push(validationFailures.slice(0, 2).join(' | '));
+  }
+  if (details?.attemptSummary) {
+    extras.push(`Attempt summary: ${details.attemptSummary}`);
+  }
+
+  return `Coach request failed: ${message}${extras.length > 0 ? ` ${extras.join(' ')}` : ''}`;
 }
 
 const VERDICTS = ['correct', 'mixed', 'incorrect', 'unclear'];
@@ -57,6 +92,7 @@ export function normalizeCoachResponse(raw) {
 
   const confidence = ensureEnum(analysis.confidence, 'assistant.analysis.confidence', ['low', 'medium', 'high']);
   const overallVerdict = ensureEnum(analysis.overallVerdict, 'assistant.analysis.overallVerdict', VERDICTS);
+  const factCheck = ensureObject(analysis.factCheck, 'assistant.analysis.factCheck');
 
   if (!Array.isArray(analysis.streetVerdicts)) {
     throw new Error('assistant.analysis.streetVerdicts must be an array.');
@@ -86,11 +122,34 @@ export function normalizeCoachResponse(raw) {
   if (topAlternatives.length !== 2) {
     throw new Error('assistant.analysis.topAlternatives must contain exactly 2 items.');
   }
+  const heroCards = ensureStringArray(factCheck.heroCards, 'assistant.analysis.factCheck.heroCards');
+  if (heroCards.length !== 2) {
+    throw new Error('assistant.analysis.factCheck.heroCards must contain exactly 2 cards.');
+  }
 
   return {
     assistant: {
       content: ensureString(assistant.content, 'assistant.content'),
       analysis: {
+        factCheck: {
+          heroCards,
+          heroHandCode: ensureString(factCheck.heroHandCode, 'assistant.analysis.factCheck.heroHandCode'),
+          heroPosition: ensureString(factCheck.heroPosition, 'assistant.analysis.factCheck.heroPosition'),
+          preflopLastAggressorPosition: ensureString(
+            factCheck.preflopLastAggressorPosition,
+            'assistant.analysis.factCheck.preflopLastAggressorPosition'
+          ),
+          heroWasPreflopAggressor: ensureBoolean(
+            factCheck.heroWasPreflopAggressor,
+            'assistant.analysis.factCheck.heroWasPreflopAggressor'
+          ),
+          heroCanCbetFlop: ensureBoolean(factCheck.heroCanCbetFlop, 'assistant.analysis.factCheck.heroCanCbetFlop'),
+          heroPostflopPosition: ensureEnum(
+            factCheck.heroPostflopPosition,
+            'assistant.analysis.factCheck.heroPostflopPosition',
+            ['out_of_position', 'in_position', 'unknown']
+          ),
+        },
         overallVerdict,
         overallReason: ensureString(analysis.overallReason, 'assistant.analysis.overallReason'),
         streetVerdicts,

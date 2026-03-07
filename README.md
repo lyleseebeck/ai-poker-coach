@@ -41,13 +41,13 @@ Core features:
 
 ---
 
-## Coach feature (v2 verdict-first)
+## Coach feature (v3 factual guardrails)
 
 - In the **Coach** section, select a saved hand from the dropdown.
 - Enter a question/prompt and submit.
 - The app sends the selected hand plus your prompt to `/api/coach-hand`.
 - The backend applies a master coaching prompt and calls OpenRouter with free-model fallback.
-- Responses are strict JSON with verdict-first analysis, rendered in structured sections on the frontend.
+- Responses are strict JSON with verdict-first analysis and hidden fact-check validation before display.
 - Chat is **ephemeral** (not persisted) and context is limited to the **last 8 messages**.
 
 ---
@@ -58,6 +58,13 @@ Required:
 - `COACH_PROVIDER=openrouter`
 - `OPENROUTER_API_KEY=<your key>`
 - `COACH_OPENROUTER_MODELS=<comma-separated model ids, each containing :free>`
+
+Recommended quality-first model order:
+- `openai/gpt-oss-120b:free`
+- `meta-llama/llama-3.3-70b-instruct:free`
+- `google/gemma-3-27b-it:free`
+- `mistralai/mistral-small-3.1-24b-instruct:free`
+- `openai/gpt-oss-20b:free`
 
 Optional:
 - `COACH_REQUEST_TIMEOUT_MS=25000`
@@ -95,6 +102,15 @@ Response:
   "assistant": {
     "content": "string",
     "analysis": {
+      "factCheck": {
+        "heroCards": ["5d", "4d"],
+        "heroHandCode": "54s",
+        "heroPosition": "BB",
+        "preflopLastAggressorPosition": "UTG+1",
+        "heroWasPreflopAggressor": false,
+        "heroCanCbetFlop": false,
+        "heroPostflopPosition": "out_of_position"
+      },
       "overallVerdict": "correct",
       "overallReason": "string",
       "streetVerdicts": [
@@ -125,10 +141,17 @@ Response:
 ```
 
 Verdict rules:
+- `analysis.factCheck` is required and validated server-side against derived hand facts.
 - `overallVerdict` and `streetVerdicts[].verdict` are limited to `correct|mixed|incorrect|unclear`.
 - `streetVerdicts` must include every street where hero took an action.
 - `topAlternatives` must contain exactly 2 items.
 - Removed fields: `assumptions`, `nextSessionFocus`, `practiceDrills`, `streetPlan`.
+- Numeric `%` frequencies are disallowed; model must use qualitative frequencies.
+
+Error response details for strict failures:
+- `error.details.validationFailures`: plain-language validation/fact-check failures.
+- `error.details.attemptSummary`: summarized model-attempt outcomes.
+- `error.details.lastModel`: most recent model id used.
 
 ---
 

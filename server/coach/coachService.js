@@ -19,6 +19,42 @@ function parseTimeoutMs(value) {
   return Math.min(Math.max(Math.round(n), 1000), 120000);
 }
 
+function summarizeAttempts(attempts) {
+  if (!Array.isArray(attempts) || attempts.length === 0) return 'no attempt details';
+  const counts = new Map();
+  for (const attempt of attempts) {
+    const reason = String(attempt?.reason || 'unknown');
+    const statusPart = Number.isFinite(Number(attempt?.status)) ? `:${Number(attempt.status)}` : '';
+    const key = `${reason}${statusPart}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([key, count]) => `${key}x${count}`)
+    .join(', ');
+}
+
+function latestModelFromAttempts(attempts) {
+  if (!Array.isArray(attempts) || attempts.length === 0) return null;
+  const latest = attempts[attempts.length - 1];
+  return latest?.model || null;
+}
+
+function extractValidationFailures(attempts) {
+  if (!Array.isArray(attempts) || attempts.length === 0) return [];
+  const failures = [];
+  for (const attempt of attempts) {
+    if (attempt?.reason !== 'invalid_output') continue;
+    if (Array.isArray(attempt?.validationFailures)) {
+      failures.push(...attempt.validationFailures.map((item) => String(item)));
+      continue;
+    }
+    if (attempt?.detail) {
+      failures.push(String(attempt.detail));
+    }
+  }
+  return [...new Set(failures.filter(Boolean))];
+}
+
 function getRequiredStreetVerdictSet(handContext) {
   const required = new Set();
   const heroStreetSummary = handContext?.heroStreetSummary || {};
@@ -54,10 +90,56 @@ function validateStreetCoverage(validatedPayload, handContext) {
   }
 }
 
+function normalizeFactValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).toUpperCase());
+  }
+  if (typeof value === 'string') return value.toUpperCase();
+  return value;
+}
+
+function validateFactCheckAgainstGroundTruth(validatedPayload, handContext) {
+  const expected = handContext?.factCheckGroundTruth || {};
+  const actual = validatedPayload?.assistant?.analysis?.factCheck || {};
+  const failures = [];
+
+  const checks = [
+    ['heroCards', expected.heroCards, actual.heroCards],
+    ['heroHandCode', expected.heroHandCode, actual.heroHandCode],
+    ['heroPosition', expected.heroPosition, actual.heroPosition],
+    ['preflopLastAggressorPosition', expected.preflopLastAggressorPosition, actual.preflopLastAggressorPosition],
+    ['heroWasPreflopAggressor', expected.heroWasPreflopAggressor, actual.heroWasPreflopAggressor],
+    ['heroCanCbetFlop', expected.heroCanCbetFlop, actual.heroCanCbetFlop],
+    ['heroPostflopPosition', expected.heroPostflopPosition, actual.heroPostflopPosition],
+  ];
+
+  for (const [label, expectedValue, actualValue] of checks) {
+    const left = normalizeFactValue(expectedValue);
+    const right = normalizeFactValue(actualValue);
+    const same = Array.isArray(left)
+      ? Array.isArray(right) && left.length === right.length && left.every((item, index) => item === right[index])
+      : left === right;
+    if (!same) {
+      failures.push(`${label} mismatch (expected: ${JSON.stringify(expectedValue)}, got: ${JSON.stringify(actualValue)}).`);
+    }
+  }
+
+  if (failures.length > 0) {
+    throw createCoachError('Coach response failed fact-check validation.', {
+      statusCode: 502,
+      code: 'COACH_FACT_CHECK_FAILED',
+      details: {
+        validationFailures: failures,
+      },
+    });
+  }
+}
+
 function parseAndValidateModelContent(content, handContext) {
   const parsed = parseCoachModelJson(content);
   const validatedPayload = validateCoachModelPayload(parsed);
   validateStreetCoverage(validatedPayload, handContext);
+  validateFactCheckAgainstGroundTruth(validatedPayload, handContext);
   return validatedPayload;
 }
 
@@ -94,7 +176,6 @@ export async function coachHand(payload, options = {}) {
   };
 
   let generation;
-  let usedRepairRetry = false;
 
   try {
     generation = await provider.generate({
@@ -107,7 +188,6 @@ export async function coachHand(payload, options = {}) {
       throw error;
     }
 
-    usedRepairRetry = true;
     warnings.push('Coach output required one repair retry to return valid JSON.');
 
     const repairMessages = buildCoachRepairMessages({
@@ -126,19 +206,42 @@ export async function coachHand(payload, options = {}) {
         validateContent: modelContentValidator,
       });
     } catch (repairError) {
+      const attempts = repairError?.details?.attempts || error?.details?.attempts || [];
+      const validationFailures = extractValidationFailures(attempts);
       throw createCoachError('Coach output remained invalid after one repair retry.', {
         statusCode: 502,
         code: 'COACH_REPAIR_FAILED',
         details: {
           firstPassErrorCode: error?.code || null,
           repairErrorCode: repairError?.code || null,
-          attempts: repairError?.details?.attempts || error?.details?.attempts || null,
+          attempts: attempts.length > 0 ? attempts : null,
+          validationFailures,
+          attemptSummary: summarizeAttempts(attempts),
+          lastModel: latestModelFromAttempts(attempts),
         },
       });
     }
   }
 
-  const parsedPayload = parseAndValidateModelContent(generation.content, handContext);
+  let parsedPayload;
+  try {
+    parsedPayload = parseAndValidateModelContent(generation.content, handContext);
+  } catch (error) {
+    const attempts = generation?.attempts || [];
+    if (error?.details == null) {
+      error.details = {};
+    }
+    if (!Array.isArray(error.details.validationFailures) || error.details.validationFailures.length === 0) {
+      error.details.validationFailures = [error?.message || 'Model output failed validation.'];
+    }
+    if (!error.details.attemptSummary) {
+      error.details.attemptSummary = summarizeAttempts(attempts);
+    }
+    if (!error.details.lastModel) {
+      error.details.lastModel = generation?.model || latestModelFromAttempts(attempts);
+    }
+    throw error;
+  }
 
   return {
     assistant: parsedPayload.assistant,

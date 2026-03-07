@@ -30,6 +30,15 @@ function makeValidModelPayload() {
     assistant: {
       content: 'You over-defended preflop and over-bluffed turn.',
       analysis: {
+        factCheck: {
+          heroCards: ['As', 'Kd'],
+          heroHandCode: 'AKo',
+          heroPosition: 'BTN',
+          preflopLastAggressorPosition: 'CO',
+          heroWasPreflopAggressor: false,
+          heroCanCbetFlop: true,
+          heroPostflopPosition: 'in_position',
+        },
         overallVerdict: 'mixed',
         overallReason: 'Preflop is standard, but the flop line gives up too much EV.',
         streetVerdicts: [
@@ -51,7 +60,7 @@ function makeValidModelPayload() {
         biggestLeaks: ['Calling too wide preflop'],
         gtoCorrections: ['Fold more offsuit broadways versus early opens.'],
         topAlternatives: [
-          'Flop: bet one-third pot with range advantage and backdoor equity.',
+          'Flop: use a small bet with range advantage and backdoor equity.',
           'Turn: after check-back flop, value-bet thinner and reduce bluff density.',
         ],
         exploitativeAdjustments: ['Versus this pool, overfold river bluff-catchers without blockers.'],
@@ -176,4 +185,31 @@ test('validateCoachModelPayload enforces exactly two top alternatives', () => {
   const invalid = makeValidModelPayload();
   invalid.assistant.analysis.topAlternatives = ['Only one'];
   assert.throws(() => validateCoachModelPayload(invalid), /topAlternatives must contain exactly 2 items/i);
+});
+
+test('validateCoachModelPayload rejects suitedness mismatch inside fact check', () => {
+  const invalid = makeValidModelPayload();
+  invalid.assistant.analysis.factCheck.heroCards = ['5d', '4d'];
+  invalid.assistant.analysis.factCheck.heroHandCode = '54o';
+  assert.throws(() => validateCoachModelPayload(invalid), /heroHandCode must match heroCards/i);
+});
+
+test('validateCoachModelPayload rejects illegal c-bet guidance when hero cannot c-bet flop', () => {
+  const invalid = makeValidModelPayload();
+  invalid.assistant.analysis.factCheck.heroCanCbetFlop = false;
+  invalid.assistant.analysis.topAlternatives[0] = 'Flop: c-bet small at low frequency.';
+  assert.throws(() => validateCoachModelPayload(invalid), /illegal flop c-bet guidance/i);
+});
+
+test('validateCoachModelPayload rejects in-position wording when hero is out of position', () => {
+  const invalid = makeValidModelPayload();
+  invalid.assistant.analysis.factCheck.heroPostflopPosition = 'out_of_position';
+  invalid.assistant.analysis.gtoCorrections = ['Take the in position check back line more often.'];
+  assert.throws(() => validateCoachModelPayload(invalid), /out-of-position postflop facts/i);
+});
+
+test('validateCoachModelPayload rejects explicit percentages', () => {
+  const invalid = makeValidModelPayload();
+  invalid.assistant.analysis.gtoCorrections = ['3-bet 15% in this spot.'];
+  assert.throws(() => validateCoachModelPayload(invalid), /percentage frequencies are not allowed/i);
 });

@@ -6,6 +6,11 @@ export const MAX_HISTORY_CONTENT_LENGTH = 2000;
 export const MAX_HISTORY_ITEMS = 40;
 export const COACH_VERDICTS = ['correct', 'mixed', 'incorrect', 'unclear'];
 export const COACH_STREETS = ['preflop', 'flop', 'turn', 'river'];
+export const COACH_POSTFLOP_POSITION = ['out_of_position', 'in_position', 'unknown'];
+const CBET_PATTERN = /\bc[\s-]?bet\b|\bcontinuation[\s-]?bet\b/i;
+const POSITIONALLY_INCORRECT_PATTERN = /\bin[\s-]?position\b|\bcheck[\s-]?back\b/i;
+const NEGATION_PATTERN = /\b(cannot|can't|can not|not able|unable|do not|don't|out of position|oop)\b/i;
+const PERCENT_PATTERN = /\b\d+(\.\d+)?\s*%/;
 
 function isPlainObject(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -54,6 +59,61 @@ function requireEnumField(value, label, allowedValues, statusCode = 500) {
     });
   }
   return normalized;
+}
+
+function requireBooleanField(value, label, statusCode = 500) {
+  if (typeof value !== 'boolean') {
+    throw createCoachError(`${label} must be a boolean.`, {
+      statusCode,
+      code: 'COACH_MODEL_SCHEMA_INVALID',
+    });
+  }
+  return value;
+}
+
+function validateCardText(value, label, statusCode = 500) {
+  const text = requireStringField(value, label, 3, statusCode);
+  if (!/^[2-9TJQKA][shdc]$/i.test(text)) {
+    throw createCoachError(`${label} must be a valid card like As or Td.`, {
+      statusCode,
+      code: 'COACH_FACT_CHECK_FAILED',
+    });
+  }
+  return `${text[0].toUpperCase()}${text[1].toLowerCase()}`;
+}
+
+function normalizeRankValue(rank) {
+  return '23456789TJQKA'.indexOf(rank);
+}
+
+function buildHandCodeFromCards(cards) {
+  if (!Array.isArray(cards) || cards.length !== 2) return null;
+  const rankA = cards[0][0];
+  const suitA = cards[0][1];
+  const rankB = cards[1][0];
+  const suitB = cards[1][1];
+  if (rankA === rankB) return `${rankA}${rankB}`;
+  const first = normalizeRankValue(rankA) >= normalizeRankValue(rankB) ? rankA : rankB;
+  const second = first === rankA ? rankB : rankA;
+  return `${first}${second}${suitA === suitB ? 's' : 'o'}`;
+}
+
+function collectAnalysisText(content, analysis) {
+  const lines = [content, analysis?.overallReason];
+  for (const item of analysis?.streetVerdicts || []) {
+    lines.push(item.heroAction, item.reason, item.gtoPreferredAction);
+  }
+  for (const group of ['biggestLeaks', 'gtoCorrections', 'topAlternatives', 'exploitativeAdjustments']) {
+    for (const item of analysis?.[group] || []) {
+      lines.push(item);
+    }
+  }
+  return lines.map((item) => String(item || '').trim()).filter(Boolean);
+}
+
+function isLikelyContradictoryRecommendation(text, pattern) {
+  if (!pattern.test(text)) return false;
+  return !NEGATION_PATTERN.test(text);
 }
 
 function extractJsonCandidate(rawText) {
@@ -207,6 +267,68 @@ export function validateCoachModelPayload(payload) {
     });
   }
 
+  const factCheckRaw = analysis.factCheck;
+  if (!isPlainObject(factCheckRaw)) {
+    throw createCoachError('assistant.analysis.factCheck must be an object.', {
+      statusCode: 502,
+      code: 'COACH_MODEL_SCHEMA_INVALID',
+    });
+  }
+
+  if (!Array.isArray(factCheckRaw.heroCards) || factCheckRaw.heroCards.length !== 2) {
+    throw createCoachError('assistant.analysis.factCheck.heroCards must contain exactly 2 cards.', {
+      statusCode: 502,
+      code: 'COACH_FACT_CHECK_FAILED',
+    });
+  }
+  const factHeroCards = factCheckRaw.heroCards.map((card, index) =>
+    validateCardText(card, `assistant.analysis.factCheck.heroCards[${index}]`, 502)
+  );
+  const derivedHandCode = buildHandCodeFromCards(factHeroCards);
+  const factHeroHandCode = requireStringField(
+    factCheckRaw.heroHandCode,
+    'assistant.analysis.factCheck.heroHandCode',
+    10,
+    502
+  ).toUpperCase();
+  if (derivedHandCode && factHeroHandCode !== derivedHandCode.toUpperCase()) {
+    throw createCoachError(
+      'assistant.analysis.factCheck.heroHandCode must match heroCards suitedness and ranks.',
+      {
+        statusCode: 502,
+        code: 'COACH_FACT_CHECK_FAILED',
+      }
+    );
+  }
+
+  const factCheck = {
+    heroCards: factHeroCards,
+    heroHandCode: factHeroHandCode,
+    heroPosition: requireStringField(factCheckRaw.heroPosition, 'assistant.analysis.factCheck.heroPosition', 40, 502).toUpperCase(),
+    preflopLastAggressorPosition: requireStringField(
+      factCheckRaw.preflopLastAggressorPosition,
+      'assistant.analysis.factCheck.preflopLastAggressorPosition',
+      40,
+      502
+    ).toUpperCase(),
+    heroWasPreflopAggressor: requireBooleanField(
+      factCheckRaw.heroWasPreflopAggressor,
+      'assistant.analysis.factCheck.heroWasPreflopAggressor',
+      502
+    ),
+    heroCanCbetFlop: requireBooleanField(
+      factCheckRaw.heroCanCbetFlop,
+      'assistant.analysis.factCheck.heroCanCbetFlop',
+      502
+    ),
+    heroPostflopPosition: requireEnumField(
+      factCheckRaw.heroPostflopPosition,
+      'assistant.analysis.factCheck.heroPostflopPosition',
+      COACH_POSTFLOP_POSITION,
+      502
+    ),
+  };
+
   const confidence = requireEnumField(analysis.confidence, 'assistant.analysis.confidence', ['low', 'medium', 'high'], 502);
   const overallVerdict = requireEnumField(
     analysis.overallVerdict,
@@ -282,24 +404,61 @@ export function validateCoachModelPayload(payload) {
     });
   }
 
+  const normalizedAnalysis = {
+    factCheck,
+    overallVerdict,
+    overallReason: requireStringField(analysis.overallReason, 'assistant.analysis.overallReason', 4000, 502),
+    streetVerdicts,
+    biggestLeaks: requireStringArray(analysis.biggestLeaks, 'assistant.analysis.biggestLeaks', 1200, 502),
+    gtoCorrections: requireStringArray(analysis.gtoCorrections, 'assistant.analysis.gtoCorrections', 1200, 502),
+    topAlternatives,
+    exploitativeAdjustments: requireStringArray(
+      analysis.exploitativeAdjustments,
+      'assistant.analysis.exploitativeAdjustments',
+      1200,
+      502
+    ),
+    confidence,
+  };
+
+  const allText = collectAnalysisText(content, normalizedAnalysis);
+  if (allText.some((text) => PERCENT_PATTERN.test(text))) {
+    throw createCoachError('Explicit percentage frequencies are not allowed in coach output.', {
+      statusCode: 502,
+      code: 'COACH_CONSISTENCY_FAILED',
+      details: {
+        validationFailures: ['Use qualitative frequencies (low/high/mixed) instead of numeric percentages.'],
+      },
+    });
+  }
+
+  if (!factCheck.heroCanCbetFlop && allText.some((text) => isLikelyContradictoryRecommendation(text, CBET_PATTERN))) {
+    throw createCoachError('Coach output contains illegal flop c-bet guidance for this hand context.', {
+      statusCode: 502,
+      code: 'COACH_LEGALITY_FAILED',
+      details: {
+        validationFailures: ['Hero cannot c-bet flop in this hand, but output recommended c-betting.'],
+      },
+    });
+  }
+
+  if (
+    factCheck.heroPostflopPosition === 'out_of_position' &&
+    allText.some((text) => isLikelyContradictoryRecommendation(text, POSITIONALLY_INCORRECT_PATTERN))
+  ) {
+    throw createCoachError('Coach output conflicts with out-of-position postflop facts.', {
+      statusCode: 502,
+      code: 'COACH_CONSISTENCY_FAILED',
+      details: {
+        validationFailures: ['Output implied in-position play while hero is out of position.'],
+      },
+    });
+  }
+
   return {
     assistant: {
       content,
-      analysis: {
-        overallVerdict,
-        overallReason: requireStringField(analysis.overallReason, 'assistant.analysis.overallReason', 4000, 502),
-        streetVerdicts,
-        biggestLeaks: requireStringArray(analysis.biggestLeaks, 'assistant.analysis.biggestLeaks', 1200, 502),
-        gtoCorrections: requireStringArray(analysis.gtoCorrections, 'assistant.analysis.gtoCorrections', 1200, 502),
-        topAlternatives,
-        exploitativeAdjustments: requireStringArray(
-          analysis.exploitativeAdjustments,
-          'assistant.analysis.exploitativeAdjustments',
-          1200,
-          502
-        ),
-        confidence,
-      },
+      analysis: normalizedAnalysis,
     },
   };
 }

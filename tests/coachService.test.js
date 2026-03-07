@@ -9,6 +9,15 @@ function makeValidModelOutput(summary = 'Default summary') {
     assistant: {
       content: 'Accessible coaching summary for this hand.',
       analysis: {
+        factCheck: {
+          heroCards: ['As', 'Kd'],
+          heroHandCode: 'AKo',
+          heroPosition: 'BTN',
+          preflopLastAggressorPosition: 'UNKNOWN',
+          heroWasPreflopAggressor: false,
+          heroCanCbetFlop: false,
+          heroPostflopPosition: 'unknown',
+        },
         overallVerdict: 'mixed',
         overallReason: summary,
         streetVerdicts: [
@@ -23,8 +32,8 @@ function makeValidModelOutput(summary = 'Default summary') {
             street: 'flop',
             heroAction: 'Folded',
             verdict: 'mixed',
-            reason: 'Fold can be fine but may overfold versus small sizing.',
-            gtoPreferredAction: 'Continue more often versus small bets.',
+            reason: 'Fold can be fine but may overfold versus small sizing when ranges are wide.',
+            gtoPreferredAction: 'Continue more often when price and equity are favorable.',
           },
         ],
         biggestLeaks: ['Leak example'],
@@ -155,7 +164,10 @@ test('coachHand returns structured 502 when repair retry also fails', async () =
 
   await assert.rejects(
     () => coachHand(makePayload(1), { provider }),
-    (error) => error?.code === 'COACH_REPAIR_FAILED' && Number(error?.statusCode) === 502
+    (error) =>
+      error?.code === 'COACH_REPAIR_FAILED' &&
+      Number(error?.statusCode) === 502 &&
+      typeof error?.details?.attemptSummary === 'string'
   );
   assert.equal(callCount, 2);
 });
@@ -172,6 +184,15 @@ test('coachHand rejects model output that omits acted streets from street verdic
           assistant: {
             content: 'Summary',
             analysis: {
+              factCheck: {
+                heroCards: ['As', 'Kd'],
+                heroHandCode: 'AKo',
+                heroPosition: 'BTN',
+                preflopLastAggressorPosition: 'UNKNOWN',
+                heroWasPreflopAggressor: false,
+                heroCanCbetFlop: false,
+                heroPostflopPosition: 'unknown',
+              },
               overallVerdict: 'mixed',
               overallReason: 'Missing acted-street verdict.',
               streetVerdicts: [
@@ -198,5 +219,66 @@ test('coachHand rejects model output that omits acted streets from street verdic
   await assert.rejects(
     () => coachHand(makePayload(0), { provider }),
     (error) => error?.code === 'COACH_MODEL_SCHEMA_INVALID' && Number(error?.statusCode) === 502
+  );
+});
+
+test('coachHand rejects fact check mismatches with targeted error details', async () => {
+  const provider = {
+    name: 'openrouter',
+    async generate() {
+      return {
+        provider: 'openrouter',
+        model: 'provider/model:free',
+        fallbackUsed: false,
+        content: JSON.stringify({
+          assistant: {
+            content: 'Summary',
+            analysis: {
+              factCheck: {
+                heroCards: ['As', 'Kd'],
+                heroHandCode: 'AKo',
+                heroPosition: 'CO',
+                preflopLastAggressorPosition: 'UNKNOWN',
+                heroWasPreflopAggressor: false,
+                heroCanCbetFlop: false,
+                heroPostflopPosition: 'unknown',
+              },
+              overallVerdict: 'mixed',
+              overallReason: 'Reason.',
+              streetVerdicts: [
+                {
+                  street: 'preflop',
+                  heroAction: 'Called open',
+                  verdict: 'correct',
+                  reason: 'Fine defend.',
+                  gtoPreferredAction: 'Mostly call.',
+                },
+                {
+                  street: 'flop',
+                  heroAction: 'Folded',
+                  verdict: 'mixed',
+                  reason: 'Spot dependent.',
+                  gtoPreferredAction: 'Continue selectively.',
+                },
+              ],
+              biggestLeaks: ['Leak example'],
+              gtoCorrections: ['Correction example'],
+              topAlternatives: ['Alt 1', 'Alt 2'],
+              exploitativeAdjustments: ['Exploit adjustment'],
+              confidence: 'low',
+            },
+          },
+        }),
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => coachHand(makePayload(0), { provider }),
+    (error) =>
+      error?.code === 'COACH_FACT_CHECK_FAILED' &&
+      Number(error?.statusCode) === 502 &&
+      Array.isArray(error?.details?.validationFailures) &&
+      error.details.validationFailures.length > 0
   );
 });
