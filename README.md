@@ -132,6 +132,27 @@ Response:
 
 ---
 
+## Security hardening for public hosting (deferred)
+
+Current status:
+- For local testing, coach endpoint limits/auth are intentionally not enforced.
+- This is acceptable for local/private development but not safe for an internet-exposed deployment.
+
+Primary risk to address before public launch:
+- `POST /api/coach-hand` is currently callable without user auth, so a public deployment could be abused to consume OpenRouter quota.
+
+Hardening options (recommended order):
+1. Protect the deployed app (password/access gate) for private beta.
+2. Add real user authentication and require a valid session for `/api/coach-hand`.
+3. Add endpoint rate limiting and abuse controls (per IP/user, burst + cooldown).
+4. Redact internal error details returned to clients (keep detailed logs server-side only).
+5. Keep provider budget caps/alerts and key rotation policy as blast-radius control.
+
+Why this is deferred now:
+- We are prioritizing fast local iteration/testing and will apply these controls once the app is hosted publicly.
+
+---
+
 ## Project structure
 
 ```
@@ -156,4 +177,3 @@ api/
 tests/
   *.test.js
 ```
-
