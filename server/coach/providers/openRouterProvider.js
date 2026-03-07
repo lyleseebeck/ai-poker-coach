@@ -81,6 +81,24 @@ function isRetryableStatus(status) {
   return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
 }
 
+function summarizeAttempts(attempts) {
+  if (!Array.isArray(attempts) || attempts.length === 0) return 'no attempt details';
+
+  const counts = new Map();
+  for (const attempt of attempts) {
+    const reason = String(attempt?.reason || 'unknown');
+    const statusPart = Number.isFinite(Number(attempt?.status))
+      ? `:${Number(attempt.status)}`
+      : '';
+    const key = `${reason}${statusPart}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+
+  return Array.from(counts.entries())
+    .map(([key, count]) => `${key}x${count}`)
+    .join(', ');
+}
+
 export function resolveOpenRouterConfig(options = {}) {
   const env = options.env || process.env;
 
@@ -226,7 +244,8 @@ export function createOpenRouterProvider(options = {}) {
       }
 
       const hasInvalidOutput = attempts.some((item) => item.reason === 'invalid_output');
-      throw createCoachError('OpenRouter free models were exhausted without a valid coaching response.', {
+      const attemptSummary = summarizeAttempts(attempts);
+      throw createCoachError(`OpenRouter free models were exhausted. Attempt summary: ${attemptSummary}`, {
         statusCode: 502,
         code: hasInvalidOutput ? 'COACH_PROVIDER_OUTPUT_INVALID' : 'COACH_PROVIDER_EXHAUSTED',
         details: { attempts },
