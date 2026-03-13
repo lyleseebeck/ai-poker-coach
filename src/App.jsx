@@ -184,9 +184,9 @@ export function App() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       <header className="mb-8">
-        <h1 className="text-2xl font-semibold text-slate-800">Poker Hand Tracker</h1>
+        <h1 className="text-2xl font-semibold text-slate-800">AI Poker Coach</h1>
         <p className="text-slate-500 text-sm mt-1">
-          Log hands and review them later. Data stays in your browser.
+          Capture real hands, get AI coaching feedback, and improve your decision-making street by street.
         </p>
       </header>
 
