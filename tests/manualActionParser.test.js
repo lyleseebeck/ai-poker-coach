@@ -44,6 +44,7 @@ test('tracks hero actions by street and infers standard 3-bet sizing when amount
     'i had AA in the button. villain raised, i 3bet, he called. flop JT2 rainbow. he check-raised, i call. turn 9, he jams, i fold'
   );
 
+  assert.equal(parsed.parsedFields.hero.position, 'BTN');
   assert.equal(parsed.parsedFields.heroStreetSummary.preflop.action, 'raise');
   assert.equal(parsed.parsedFields.heroStreetSummary.preflop.amountBb, 8);
   assert.equal(parsed.parsedFields.heroStreetSummary.flop.action, 'call');

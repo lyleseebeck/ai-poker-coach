@@ -60,6 +60,14 @@ function inferHeroPosition(rawText, providedPosition) {
   if (fromProvided) return fromProvided;
 
   const text = String(rawText || '').toLowerCase();
+  if (/\bbutton\b|\bbtn\b|\bdealer\b/.test(text)) return 'BTN';
+  if (/\bcut[\s-]?off\b|\bco\b/.test(text)) return 'CO';
+  if (/\bhijack\b|\bhj\b/.test(text)) return 'HJ';
+  if (/\butg\+?4\b|\blj\b|\blojack\b/.test(text)) return 'UTG+4';
+  if (/\butg\+?3\b/.test(text)) return 'UTG+3';
+  if (/\butg\+?2\b/.test(text)) return 'UTG+2';
+  if (/\butg\+?1\b/.test(text)) return 'UTG+1';
+  if (/\butg\b|\bunder the gun\b/.test(text)) return 'UTG';
   if (/\bout of bb\b|\bin the bb\b|\bfrom bb\b|\bbig blind\b/.test(text)) return 'BB';
   if (/\bout of sb\b|\bin the sb\b|\bfrom sb\b|\bsmall blind\b/.test(text)) return 'SB';
   return '';

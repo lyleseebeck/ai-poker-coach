@@ -1019,8 +1019,12 @@ export function UnifiedHandForm({
       Boolean(currentManualSignature) &&
       Boolean(manualParseResult?.parsed) &&
       shouldRequestAiFallback(manualParseResult.parsed);
+    const hasCurrentAiProposal =
+      Boolean(currentManualSignature) &&
+      aiProposalSignature === currentManualSignature &&
+      Boolean(aiProposal);
 
-    if (!validation.isValid && shouldTryAiFallback) {
+    if (!validation.isValid && shouldTryAiFallback && !hasCurrentAiProposal) {
       const proposal = await requestAiProposal(manualParseResult.parsed);
       let unresolved = 0;
       if (proposal) {
