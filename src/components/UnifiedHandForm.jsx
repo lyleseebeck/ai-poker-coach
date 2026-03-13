@@ -498,10 +498,10 @@ function StreetDecisionRow({
   setAmountChips,
 }) {
   const inputClass =
-    'rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white';
+    'w-full min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white';
 
   return (
-    <div className="grid gap-2 md:grid-cols-[170px,1fr,120px,120px,120px] items-center">
+    <div className="grid gap-2 md:grid-cols-[170px,minmax(0,1fr),minmax(0,120px),minmax(0,120px),minmax(0,120px)] items-center">
       <label className="text-sm font-medium text-slate-700">{label}</label>
       <select
         value={action}
