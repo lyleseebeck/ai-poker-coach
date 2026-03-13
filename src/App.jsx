@@ -220,6 +220,8 @@ export function App() {
 
       <CoachPanel hands={hands} />
 
+      <div className="my-6 border-t border-slate-200" aria-hidden="true" />
+
       <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
         <h2 className="text-lg font-medium text-slate-700 mb-4">Saved hands</h2>
         <HandList hands={hands} onDeleteHand={handleDeleteHand} />
