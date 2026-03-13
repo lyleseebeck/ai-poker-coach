@@ -1639,18 +1639,10 @@ export function UnifiedHandForm({
           )}
         </div>
 
-        <CardPicker
-          targetId={effectiveTargetId}
-          selectedRank={cardPickerRank}
-          onSelectRank={setCardPickerRank}
-          onApplyCard={onApplyCard}
-        />
-        {cardPickerError && <p className="-mt-4 text-sm text-red-600">{cardPickerError}</p>}
-
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <h3 className="text-lg font-medium text-slate-700 mb-2">Your hand (hero)</h3>
           <p className="text-slate-500 text-sm mb-3">
-            Click a card then use the selector above, or pick rank/suit to fill the first empty slot.
+            Click a card then use the selector below, or pick rank/suit to fill the first empty slot.
           </p>
           <div className="flex gap-3">
             {[
@@ -1696,6 +1688,14 @@ export function UnifiedHandForm({
           clearCardBySlotId={clearCardBySlotId}
           activeCardTargetId={effectiveTargetId}
         />
+
+        <CardPicker
+          targetId={effectiveTargetId}
+          selectedRank={cardPickerRank}
+          onSelectRank={setCardPickerRank}
+          onApplyCard={onApplyCard}
+        />
+        {cardPickerError && <p className="-mt-4 text-sm text-red-600">{cardPickerError}</p>}
 
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Table context</label>

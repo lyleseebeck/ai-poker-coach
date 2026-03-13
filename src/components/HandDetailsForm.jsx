@@ -27,7 +27,7 @@ export function HandDetailsForm({
   return (
     <section className="mb-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 className="text-lg font-medium text-slate-700 mb-2">Community cards</h2>
-      <p className="text-slate-500 text-sm mb-3">Click a board slot, then use the selector above.</p>
+      <p className="text-slate-500 text-sm mb-3">Click a board slot, then use the selector below.</p>
       <div className="space-y-4">
         <div className="flex items-center gap-2">
           <input
@@ -43,7 +43,7 @@ export function HandDetailsForm({
         </div>
         {!noFlop && (
           <div className="space-y-2">
-            <p className="text-xs text-slate-500">Click a slot, then choose rank and suit in the picker above.</p>
+            <p className="text-xs text-slate-500">Click a slot, then choose rank and suit in the picker below.</p>
             <div className="flex flex-wrap gap-3">
               {communitySlots.map(({ id, label, value }) => (
                 <div key={id} className="flex flex-col items-center gap-1">
