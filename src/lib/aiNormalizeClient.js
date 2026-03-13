@@ -23,6 +23,18 @@ function toRecord(value, label) {
   return out;
 }
 
+function normalizeMeta(value) {
+  if (value == null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('meta must be an object.');
+  }
+  return {
+    provider: value.provider ? String(value.provider) : null,
+    model: value.model ? String(value.model) : null,
+    fallbackUsed: Boolean(value.fallbackUsed),
+  };
+}
+
 function parseJsonSafely(text) {
   if (!text) return null;
   try {
@@ -58,6 +70,7 @@ function normalizeAiResponse(raw) {
         ? body.overallConfidence
         : null,
     model: body.model ? String(body.model) : null,
+    meta: normalizeMeta(body.meta),
   };
 }
 

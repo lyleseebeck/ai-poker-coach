@@ -38,3 +38,34 @@ test('uses boardCardsCount option to require later street actions', () => {
   assert.ok(parsed.missingRequired.includes('heroStreetSummary.turn.action'));
   assert.ok(parsed.missingRequired.includes('heroStreetSummary.river.action'));
 });
+
+test('tracks hero actions by street and infers standard 3-bet sizing when amount is missing', () => {
+  const parsed = parseManualActionText(
+    'i had AA in the button. villain raised, i 3bet, he called. flop JT2 rainbow. he check-raised, i call. turn 9, he jams, i fold'
+  );
+
+  assert.equal(parsed.parsedFields.hero.position, 'BTN');
+  assert.equal(parsed.parsedFields.heroStreetSummary.preflop.action, 'raise');
+  assert.equal(parsed.parsedFields.heroStreetSummary.preflop.amountBb, 8);
+  assert.equal(parsed.parsedFields.heroStreetSummary.flop.action, 'call');
+  assert.equal(parsed.parsedFields.heroStreetSummary.flop.amountBb, 11.55);
+  assert.equal(parsed.parsedFields.heroStreetSummary.flop.facingAmountBb, 11.55);
+  assert.equal(parsed.parsedFields.heroStreetSummary.turn.action, 'fold');
+  assert.equal(parsed.parsedFields.heroStreetSummary.turn.facingAmountBb, 40.6);
+  assert.equal(parsed.parsedFields.result.netBb, -19.55);
+  assert.equal(parsed.missingRequired.includes('heroStreetSummary.flop.action'), false);
+  assert.equal(parsed.missingRequired.includes('heroStreetSummary.turn.action'), false);
+  assert.equal(parsed.parsedFields.board.cards.length >= 4, true);
+  assert.equal(parsed.parsedFields.board.cards.map((card) => card[0]).join(''), 'JT29');
+});
+
+test('infers fold-street result when hero bets then folds to a jam', () => {
+  const parsed = parseManualActionText(
+    'i had AA in the button. villain raised, i 3bet, he called. flop JT2 rainbow. he check-raised, i call. turn 9, he checks, i bet, he jams, i fold'
+  );
+
+  assert.equal(parsed.parsedFields.heroStreetSummary.turn.action, 'fold');
+  assert.equal(parsed.parsedFields.heroStreetSummary.turn.facingAmountBb, 40.6);
+  assert.equal(parsed.parsedFields.heroStreetSummary.turn.streetNetBb, -26.8);
+  assert.equal(parsed.parsedFields.result.netBb, -46.35);
+});

@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createOpenRouterProvider } from '../server/coach/providers/openRouterProvider.js';
+import {
+  createOpenRouterProvider,
+  DEFAULT_OPENROUTER_FREE_MODEL_FALLBACKS,
+} from '../server/coach/providers/openRouterProvider.js';
 
 function makeResponse(status, payload) {
   return new Response(JSON.stringify(payload), {
@@ -111,4 +114,31 @@ test('openRouter provider rejects non-free model config', () => {
       }),
     /:free/
   );
+});
+
+test('openRouter provider appends default free fallback models after configured list', () => {
+  const configured = ['provider/model-a:free', 'provider/model-b:free'];
+  const provider = createOpenRouterProvider({
+    apiKey: 'test-key',
+    models: configured,
+    fetchImpl: async () => makeResponse(200, makeChoiceContent('ok')),
+  });
+
+  assert.deepEqual(provider.models.slice(0, configured.length), configured);
+  for (const fallbackModel of DEFAULT_OPENROUTER_FREE_MODEL_FALLBACKS) {
+    assert.equal(provider.models.includes(fallbackModel), true);
+  }
+});
+
+test('openRouter provider uses default free fallback models when COACH_OPENROUTER_MODELS is empty', () => {
+  const provider = createOpenRouterProvider({
+    apiKey: 'test-key',
+    env: {
+      OPENROUTER_API_KEY: 'test-key',
+      COACH_OPENROUTER_MODELS: '',
+    },
+    fetchImpl: async () => makeResponse(200, makeChoiceContent('ok')),
+  });
+
+  assert.deepEqual(provider.models, DEFAULT_OPENROUTER_FREE_MODEL_FALLBACKS);
 });

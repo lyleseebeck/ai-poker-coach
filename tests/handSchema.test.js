@@ -19,12 +19,14 @@ function makeValidFlopDraft() {
   draft.heroStreetSummary.preflop = {
     action: 'call',
     amountBb: 1,
+    facingAmountBb: 1,
     amountChips: 1,
     source: 'manual',
   };
   draft.heroStreetSummary.flop = {
     action: 'fold',
     amountBb: null,
+    facingAmountBb: 4.5,
     amountChips: null,
     source: 'manual',
   };
@@ -54,17 +56,28 @@ test('validateHandDraft rejects invalid board length when flop is reached', () =
   assert.match(String(validation.errors.board), /exactly 3, 4, or 5 cards/i);
 });
 
+test('validateHandDraft allows missing big blind when requireBb is false', () => {
+  const draft = makeValidFlopDraft();
+  draft.table.stakes.bb = null;
+  const validation = validateHandDraft(draft, { requireBb: false });
+  assert.equal(validation.isValid, true);
+  assert.equal(validation.errors.bigBlind, undefined);
+});
+
 test('preflop-only draft builds with postflop decisions set to null', () => {
   const draft = createEmptyHandDraft();
   draft.hero.cards = ['Ah', 'Qc'];
   draft.hero.position = 'BB';
   draft.table.numPlayers = 9;
   draft.table.stakes.bb = 1;
+  draft.table.stackDepthBb.hero = 98.5;
+  draft.table.stackDepthBb.villain = 120;
   draft.board.didReachFlop = false;
   draft.board.cards = [];
   draft.heroStreetSummary.preflop = {
     action: 'fold',
     amountBb: null,
+    facingAmountBb: 2.5,
     amountChips: null,
     source: 'manual',
   };
@@ -73,9 +86,12 @@ test('preflop-only draft builds with postflop decisions set to null', () => {
   const hand = buildHandRecordV2(draft, { requireBb: true });
   assert.equal(hand.board.didReachFlop, false);
   assert.deepEqual(hand.board.cards, []);
+  assert.equal(hand.heroStreetSummary.preflop.facingAmountBb, 2.5);
   assert.equal(hand.heroStreetSummary.flop, null);
   assert.equal(hand.heroStreetSummary.turn, null);
   assert.equal(hand.heroStreetSummary.river, null);
+  assert.equal(hand.table.stackDepthBb.hero, 98.5);
+  assert.equal(hand.table.stackDepthBb.villain, 120);
 });
 
 test('deriveResultTag and deriveResultMagnitude map expected buckets', () => {

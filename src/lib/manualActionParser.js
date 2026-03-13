@@ -19,6 +19,12 @@ const STREET_PATTERNS = {
 const LOSS_HINT = /\blose|lost|down|punt(?:ed|ing)?|spew(?:ed|ing)?\b/i;
 const WIN_HINT = /\bwin|won|up|profit|value\s*own\b/i;
 const SPLIT_HINT = /\bsplit|chop|breakeven|broke even|tie|push(?:ed)?\b/i;
+const HERO_PRONOUN_PATTERN = /\b(i|me|my|mine|hero)\b/i;
+const VILLAIN_PRONOUN_PATTERN = /\b(villain|he|she|they|opponent)\b/i;
+const SUIT_FALLBACK = ['s', 'h', 'd', 'c'];
+const STREET_SEQUENCE = ['preflop', 'flop', 'turn', 'river'];
+const DEFAULT_PRE_FLOP_OPEN_BB = 2.5;
+const DEFAULT_PRE_FLOP_3BET_BB = 8;
 
 function normalizeWhitespace(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -36,6 +42,19 @@ function toClampedConfidence(value) {
   if (n < 0) return 0;
   if (n > 1) return 1;
   return Number(n.toFixed(3));
+}
+
+function roundBb(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Number(n.toFixed(2));
+}
+
+function postedBlindBbByPosition(position) {
+  const pos = normalizePosition(position);
+  if (pos === 'SB') return 0.5;
+  if (pos === 'BB') return 1;
+  return 0;
 }
 
 function splitClauses(rawText) {
@@ -57,6 +76,14 @@ function inferHeroPosition(rawText, providedPosition) {
   if (fromProvided) return fromProvided;
 
   const text = String(rawText || '').toLowerCase();
+  if (/\bbutton\b|\bbtn\b|\bdealer\b/.test(text)) return 'BTN';
+  if (/\bcut[\s-]?off\b|\bco\b/.test(text)) return 'CO';
+  if (/\bhijack\b|\bhj\b/.test(text)) return 'HJ';
+  if (/\butg\+?4\b|\blj\b|\blojack\b/.test(text)) return 'UTG+4';
+  if (/\butg\+?3\b/.test(text)) return 'UTG+3';
+  if (/\butg\+?2\b/.test(text)) return 'UTG+2';
+  if (/\butg\+?1\b/.test(text)) return 'UTG+1';
+  if (/\butg\b|\bunder the gun\b/.test(text)) return 'UTG';
   if (/\bout of bb\b|\bin the bb\b|\bfrom bb\b|\bbig blind\b/.test(text)) return 'BB';
   if (/\bout of sb\b|\bin the sb\b|\bfrom sb\b|\bsmall blind\b/.test(text)) return 'SB';
   return '';
@@ -93,6 +120,322 @@ function findLastAction(text) {
   }
 
   return winner;
+}
+
+function scoreHeroContext(text, index) {
+  const left = String(text || '').slice(Math.max(0, index - 40), index).toLowerCase();
+  let score = 0;
+
+  let lastActor = null;
+  const actorPattern = /\b(i|me|my|hero|villain|he|she|they|opponent)\b/ig;
+  let actorMatch = actorPattern.exec(left);
+  while (actorMatch) {
+    lastActor = String(actorMatch[1] || '').toLowerCase();
+    actorMatch = actorPattern.exec(left);
+  }
+
+  if (lastActor) {
+    score += ['i', 'me', 'my', 'hero'].includes(lastActor) ? 5 : -5;
+  } else {
+    if (HERO_PRONOUN_PATTERN.test(left)) score += 2;
+    if (VILLAIN_PRONOUN_PATTERN.test(left)) score -= 2;
+  }
+
+  if (/\bi\b[^a-z0-9]{0,6}$/i.test(left)) score += 2;
+  if (/\b(villain|he|she|they|opponent)\b[^a-z0-9]{0,6}$/i.test(left)) score -= 2;
+
+  return score;
+}
+
+function findHeroAction(text) {
+  const source = String(text || '');
+  let winner = null;
+
+  for (const def of ACTION_DEFS) {
+    for (const pattern of def.patterns) {
+      const re = new RegExp(pattern.source, 'ig');
+      let match = re.exec(source);
+      while (match) {
+        const heroScore = scoreHeroContext(source, match.index);
+        const candidate = {
+          action: def.action,
+          index: match.index,
+          matchedText: match[0],
+          heroScore,
+        };
+        if (
+          !winner ||
+          candidate.heroScore > winner.heroScore ||
+          (candidate.heroScore === winner.heroScore && candidate.index >= winner.index)
+        ) {
+          winner = candidate;
+        }
+        match = re.exec(source);
+      }
+    }
+  }
+
+  if (winner && winner.heroScore < 0) {
+    return null;
+  }
+  return winner;
+}
+
+function findHeroActionSequence(text) {
+  const source = String(text || '');
+  const matches = [];
+
+  for (const def of ACTION_DEFS) {
+    for (const pattern of def.patterns) {
+      const re = new RegExp(pattern.source, 'ig');
+      let match = re.exec(source);
+      while (match) {
+        const heroScore = scoreHeroContext(source, match.index);
+        if (heroScore >= 0) {
+          matches.push({
+            action: def.action,
+            index: match.index,
+            matchedText: match[0],
+            heroScore,
+          });
+        }
+        match = re.exec(source);
+      }
+    }
+  }
+
+  matches.sort((a, b) => {
+    if (a.index !== b.index) return a.index - b.index;
+    return a.heroScore - b.heroScore;
+  });
+  return matches;
+}
+
+function parseStreetBoardCards(clause, street, usedCards = []) {
+  if (!street || !['flop', 'turn', 'river'].includes(street)) return [];
+
+  const normalizedUsed = new Set((usedCards || []).map((c) => String(c || '').trim()).filter(Boolean));
+  const explicit = [...String(clause || '').matchAll(/\b([2-9TJQKA][shdc])\b/gi)]
+    .map((m) => `${m[1][0].toUpperCase()}${m[1][1].toLowerCase()}`)
+    .filter((card) => !normalizedUsed.has(card));
+
+  if (street === 'flop' && explicit.length >= 3) return explicit.slice(0, 3);
+  if (street !== 'flop' && explicit.length >= 1) return explicit.slice(0, 1);
+
+  const withoutStreetLabel = String(clause || '')
+    .replace(/\b(preflop|flop|turn|river)\b/gi, ' ')
+    .replace(/[^2-9TJQKAshdc]/gi, ' ');
+
+  if (street === 'flop') {
+    const condensed = withoutStreetLabel.replace(/\s+/g, '').toUpperCase();
+    const rankTriplet = condensed.match(/([2-9TJQKA]{3})/);
+    if (!rankTriplet) return [];
+    const ranks = rankTriplet[1].split('');
+    const cards = [];
+    let suitIndex = 0;
+    for (const rank of ranks) {
+      while (suitIndex < SUIT_FALLBACK.length) {
+        const card = `${rank}${SUIT_FALLBACK[suitIndex]}`;
+        suitIndex += 1;
+        if (normalizedUsed.has(card) || cards.includes(card)) continue;
+        cards.push(card);
+        break;
+      }
+    }
+    return cards.length === 3 ? cards : [];
+  }
+
+  const rankMatch = withoutStreetLabel.toUpperCase().match(/\b([2-9TJQKA])\b/);
+  if (!rankMatch) return [];
+  const rank = rankMatch[1];
+  for (const suit of SUIT_FALLBACK) {
+    const card = `${rank}${suit}`;
+    if (!normalizedUsed.has(card)) return [card];
+  }
+  return [];
+}
+
+function inferPreflopAssumption(actionData, rawText) {
+  if (!actionData || actionData.action !== 'raise' || actionData.amountBb != null) return actionData;
+  const source = `${actionData.evidence || ''} ${rawText || ''}`.toLowerCase();
+  const next = { ...actionData };
+
+  if (/\b3-?bet\b/.test(source)) {
+    next.amountBb = 8;
+    next.confidence = toClampedConfidence(Math.max(next.confidence - 0.1, 0.55));
+    next.assumedAmount = true;
+    return next;
+  }
+
+  if (/\b4-?bet\b/.test(source)) {
+    next.amountBb = 22;
+    next.confidence = toClampedConfidence(Math.max(next.confidence - 0.12, 0.5));
+    next.assumedAmount = true;
+    return next;
+  }
+
+  if (/\braise|open\b/.test(source)) {
+    next.amountBb = 2.5;
+    next.confidence = toClampedConfidence(Math.max(next.confidence - 0.12, 0.5));
+    next.assumedAmount = true;
+  }
+
+  return next;
+}
+
+function hasVillainAggression(text) {
+  const clause = String(text || '').toLowerCase();
+  if (!VILLAIN_PRONOUN_PATTERN.test(clause)) return false;
+  return /\b(check[\s-]?raise|raise|bet|jam(?:s|med|ming)?|shove(?:d|s)?|all[\s-]?in)\b/.test(clause);
+}
+
+function hasVillainJam(text) {
+  const clause = String(text || '').toLowerCase();
+  if (!VILLAIN_PRONOUN_PATTERN.test(clause)) return false;
+  return /\b(jam(?:s|med|ming)?|shove(?:d|s)?|all[\s-]?in)\b/.test(clause);
+}
+
+function estimateDefaultAmountBb(street, action, runningPotBb) {
+  const normalizedAction = String(action || 'none').toLowerCase();
+  if (normalizedAction === 'none' || normalizedAction === 'check' || normalizedAction === 'fold') return null;
+
+  if (street === 'preflop') {
+    if (normalizedAction === 'call') return DEFAULT_PRE_FLOP_OPEN_BB;
+    if (normalizedAction === 'raise') return DEFAULT_PRE_FLOP_3BET_BB;
+    if (normalizedAction === 'all_in') return 20;
+    return DEFAULT_PRE_FLOP_OPEN_BB;
+  }
+
+  const basePot = Math.max(toNumber(runningPotBb) || 0, 6);
+  if (normalizedAction === 'call') return roundBb(basePot * 0.66);
+  if (normalizedAction === 'bet') return roundBb(basePot * 0.66);
+  if (normalizedAction === 'raise') return roundBb(basePot * 1.5);
+  if (normalizedAction === 'all_in') return Math.max(roundBb(basePot * 1.5) || 0, 20);
+  return null;
+}
+
+function inferFoldFacingAmountBb(street, runningPotBb, actionData) {
+  if (street === 'preflop') return DEFAULT_PRE_FLOP_OPEN_BB;
+
+  const basePot = Math.max(toNumber(runningPotBb) || 0, 6);
+  if (actionData?.villainJam) {
+    return Math.max(roundBb(basePot) || 0, 20);
+  }
+  if (actionData?.villainAggressive) {
+    return roundBb(basePot * 0.66);
+  }
+  return null;
+}
+
+function normalizeStreetAmounts(actionsByStreet, heroPosition) {
+  let runningPotBb = 1.5;
+
+  for (const street of STREET_SEQUENCE) {
+    const decision = actionsByStreet[street];
+    if (!decision) continue;
+
+    const action = ensureKnownAction(decision.action);
+    const explicitAmountBb = toNumber(decision.amountBb);
+    const explicitFacingAmountBb = toNumber(decision.facingAmountBb);
+    const explicitStreetNetBb = toNumber(decision.streetNetBb);
+    const nextDecision = {
+      ...decision,
+      action,
+      amountBb: explicitAmountBb,
+      facingAmountBb: explicitFacingAmountBb,
+      streetNetBb: explicitStreetNetBb,
+    };
+
+    if (action === 'call') {
+      if (nextDecision.facingAmountBb == null && nextDecision.amountBb != null) {
+        nextDecision.facingAmountBb = nextDecision.amountBb;
+      }
+      if (nextDecision.amountBb == null && nextDecision.facingAmountBb != null) {
+        nextDecision.amountBb = nextDecision.facingAmountBb;
+      }
+      if (nextDecision.amountBb == null) {
+        const inferredCall = estimateDefaultAmountBb(street, action, runningPotBb);
+        if (inferredCall != null) {
+          nextDecision.amountBb = inferredCall;
+          nextDecision.facingAmountBb = inferredCall;
+          nextDecision.assumedAmount = true;
+          nextDecision.assumedFacingAmount = true;
+        }
+      }
+    }
+
+    if (action === 'fold') {
+      if (nextDecision.amountBb != null && nextDecision.facingAmountBb == null) {
+        nextDecision.facingAmountBb = nextDecision.amountBb;
+        nextDecision.amountBb = null;
+      }
+      if (nextDecision.facingAmountBb == null) {
+        const inferredFacing = inferFoldFacingAmountBb(street, runningPotBb, nextDecision);
+        if (inferredFacing != null) {
+          nextDecision.facingAmountBb = inferredFacing;
+          nextDecision.assumedFacingAmount = true;
+        }
+      }
+      if (
+        nextDecision.streetNetBb == null &&
+        nextDecision.villainAggressive &&
+        ['call', 'bet', 'raise', 'all_in'].includes(String(nextDecision.priorHeroAction || '').toLowerCase())
+      ) {
+        const inferredStreetLoss = estimateDefaultAmountBb(
+          street,
+          String(nextDecision.priorHeroAction || '').toLowerCase(),
+          runningPotBb
+        );
+        if (inferredStreetLoss != null) {
+          nextDecision.streetNetBb = -Math.abs(inferredStreetLoss);
+          nextDecision.assumedStreetNet = true;
+        }
+      }
+      nextDecision.amountBb = null;
+    }
+
+    if (['bet', 'raise', 'all_in'].includes(action) && nextDecision.amountBb == null) {
+      const inferredAggressiveAmount = estimateDefaultAmountBb(street, action, runningPotBb);
+      if (inferredAggressiveAmount != null) {
+        nextDecision.amountBb = inferredAggressiveAmount;
+        nextDecision.assumedAmount = true;
+      }
+    }
+
+    actionsByStreet[street] = nextDecision;
+
+    const contribution = toNumber(nextDecision.amountBb);
+    if (contribution != null && contribution > 0) {
+      runningPotBb += contribution * 2;
+    }
+    if (action === 'fold') {
+      break;
+    }
+  }
+
+  let heroInvestedBb = postedBlindBbByPosition(heroPosition);
+  let lastAction = 'none';
+  for (const street of STREET_SEQUENCE) {
+    const decision = actionsByStreet[street];
+    if (!decision) continue;
+    const action = ensureKnownAction(decision.action);
+    lastAction = action;
+    const contribution = toNumber(decision.amountBb);
+    if (contribution != null && contribution > 0) {
+      heroInvestedBb += contribution;
+    }
+    if (action === 'fold') {
+      const streetNet = toNumber(decision.streetNetBb);
+      if (streetNet != null && streetNet < 0) {
+        heroInvestedBb += Math.abs(streetNet);
+      }
+    }
+    if (action === 'fold') break;
+  }
+
+  return {
+    estimatedFoldLossBb: lastAction === 'fold' && heroInvestedBb > 0 ? -roundBb(heroInvestedBb) : null,
+  };
 }
 
 function parseBbAmount(text) {
@@ -190,7 +533,7 @@ function inferRequiredStreets(options, didReachFlop, rawText) {
     return sanitized;
   }
 
-  if (typeof options.boardCardsCount === 'number') {
+  if (typeof options.boardCardsCount === 'number' && options.boardCardsCount > 0) {
     const n = options.boardCardsCount;
     const streets = ['preflop'];
     if (n >= 3) streets.push('flop');
@@ -221,6 +564,8 @@ function defaultDecision() {
   return {
     action: 'none',
     amountBb: null,
+    facingAmountBb: null,
+    streetNetBb: null,
     amountChips: null,
     source: 'manual',
   };
@@ -243,11 +588,33 @@ export function parseManualActionText(rawText, options = {}) {
     river: null,
   };
   const genericActionCandidates = [];
+  const inferredBoardCards = {
+    flop: [],
+    turn: [],
+    river: [],
+  };
+  let activeStreet = 'preflop';
 
   const clauses = splitClauses(text);
   for (const clause of clauses) {
     const street = findStreet(clause);
-    const lastAction = findLastAction(clause);
+    if (street) activeStreet = street;
+
+    const boardCardsForStreet = parseStreetBoardCards(
+      clause,
+      street || activeStreet,
+      [...inferredBoardCards.flop, ...inferredBoardCards.turn, ...inferredBoardCards.river]
+    );
+    if (boardCardsForStreet.length > 0) {
+      const target = street || activeStreet;
+      if (target === 'flop') inferredBoardCards.flop = boardCardsForStreet.slice(0, 3);
+      if (target === 'turn') inferredBoardCards.turn = boardCardsForStreet.slice(0, 1);
+      if (target === 'river') inferredBoardCards.river = boardCardsForStreet.slice(0, 1);
+    }
+
+    const heroActions = findHeroActionSequence(clause);
+    const primaryHeroAction = heroActions.length > 0 ? heroActions[heroActions.length - 1] : null;
+    const lastAction = primaryHeroAction || findLastAction(clause);
     if (!lastAction) continue;
 
     const bbAmount = parseBbAmount(clause);
@@ -255,18 +622,38 @@ export function parseManualActionText(rawText, options = {}) {
     const amountBb = bbAmount.value;
     const amountChips = chipAmount.value;
     const hasAmount = amountBb != null || amountChips != null;
+    const villainAggressive = hasVillainAggression(clause);
+    const villainJam = hasVillainJam(clause);
 
     const candidate = {
       action: ensureKnownAction(lastAction.action),
       amountBb,
+      facingAmountBb: null,
       amountChips,
       source: 'manual',
       confidence: scoreActionConfidence(Boolean(street), true, hasAmount),
       evidence: clause,
+      matchedText: lastAction.matchedText || null,
+      villainAggressive,
+      villainJam,
+      priorHeroAction:
+        primaryHeroAction?.action === 'fold' && heroActions.length > 1
+          ? heroActions[heroActions.length - 2].action
+          : null,
     };
 
-    if (street) {
-      actionsByStreet[street] = candidate;
+    if (candidate.action === 'call' && candidate.amountBb != null) {
+      candidate.facingAmountBb = candidate.amountBb;
+    }
+
+    if (candidate.action === 'fold' && candidate.amountBb != null) {
+      candidate.facingAmountBb = candidate.amountBb;
+      candidate.amountBb = null;
+    }
+
+    const targetStreet = street || activeStreet;
+    if (targetStreet && ['preflop', 'flop', 'turn', 'river'].includes(targetStreet)) {
+      actionsByStreet[targetStreet] = candidate;
     } else {
       genericActionCandidates.push(candidate);
     }
@@ -279,6 +666,9 @@ export function parseManualActionText(rawText, options = {}) {
       confidence: toClampedConfidence(fallback.confidence - 0.25),
     };
   }
+
+  actionsByStreet.preflop = inferPreflopAssumption(actionsByStreet.preflop, text);
+  const amountNormalization = normalizeStreetAmounts(actionsByStreet, heroPosition);
 
   const netBbData = parseBbAmount(text);
   const hasExplicitNetBb = netBbData.value != null;
@@ -295,6 +685,9 @@ export function parseManualActionText(rawText, options = {}) {
   if (signedNetBb == null && blindFallback.value != null) {
     signedNetBb = blindFallback.value;
   }
+  if (signedNetBb == null && amountNormalization.estimatedFoldLossBb != null) {
+    signedNetBb = amountNormalization.estimatedFoldLossBb;
+  }
 
   let netBbConfidence = 0;
   if (signedNetBb != null) {
@@ -302,6 +695,8 @@ export function parseManualActionText(rawText, options = {}) {
       netBbConfidence = /net|result|pnl|won|lost|profit|down|up|bb/.test(text.toLowerCase()) ? 0.95 : 0.7;
     } else if (blindFallback.confidence != null) {
       netBbConfidence = blindFallback.confidence;
+    } else if (amountNormalization.estimatedFoldLossBb != null) {
+      netBbConfidence = 0.62;
     } else {
       netBbConfidence = 0.65;
     }
@@ -323,6 +718,11 @@ export function parseManualActionText(rawText, options = {}) {
     turn: defaultDecision(),
     river: defaultDecision(),
   };
+  const boardCards = [
+    ...inferredBoardCards.flop.slice(0, 3),
+    ...inferredBoardCards.turn.slice(0, 1),
+    ...inferredBoardCards.river.slice(0, 1),
+  ].filter(Boolean);
 
   for (const street of ['preflop', 'flop', 'turn', 'river']) {
     const value = actionsByStreet[street];
@@ -330,13 +730,32 @@ export function parseManualActionText(rawText, options = {}) {
       heroStreetSummary[street] = {
         action: value.action,
         amountBb: value.amountBb,
+        facingAmountBb: value.facingAmountBb ?? null,
+        streetNetBb: value.streetNetBb ?? null,
         amountChips: value.amountChips,
         source: 'manual',
       };
       byField[`heroStreetSummary_${street}_action`] = toClampedConfidence(value.confidence);
       evidenceSnippets[`heroStreetSummary.${street}.action`] = value.evidence;
       if (value.amountBb != null) evidenceSnippets[`heroStreetSummary.${street}.amountBb`] = String(value.amountBb) + ' bb';
+      if (value.facingAmountBb != null) {
+        evidenceSnippets[`heroStreetSummary.${street}.facingAmountBb`] = String(value.facingAmountBb) + ' bb';
+      }
+      if (value.streetNetBb != null) {
+        evidenceSnippets[`heroStreetSummary.${street}.streetNetBb`] = String(value.streetNetBb) + ' bb';
+      }
       if (value.amountChips != null) evidenceSnippets[`heroStreetSummary.${street}.amountChips`] = '$' + String(value.amountChips);
+      if (value.assumedAmount && value.amountBb != null) {
+        evidenceSnippets[`heroStreetSummary.${street}.amountBb`] = `Assumed standard size ${value.amountBb} bb from action text`;
+      }
+      if (value.assumedFacingAmount && value.facingAmountBb != null) {
+        evidenceSnippets[`heroStreetSummary.${street}.facingAmountBb`] =
+          `Assumed facing size ${value.facingAmountBb} bb from action text`;
+      }
+      if (value.assumedStreetNet && value.streetNetBb != null) {
+        evidenceSnippets[`heroStreetSummary.${street}.streetNetBb`] =
+          `Assumed street result ${value.streetNetBb} bb from action sequence`;
+      }
     } else {
       byField[`heroStreetSummary_${street}_action`] = 0;
     }
@@ -352,7 +771,12 @@ export function parseManualActionText(rawText, options = {}) {
   if (signedNetBb == null) {
     missingRequired.push('result.netBb');
   } else {
-    evidenceSnippets['result.netBb'] = netBbData.snippet || blindFallback.snippet || `${signedNetBb} bb`;
+    evidenceSnippets['result.netBb'] =
+      netBbData.snippet ||
+      blindFallback.snippet ||
+      (amountNormalization.estimatedFoldLossBb != null
+        ? `Estimated from inferred street contributions (${signedNetBb} bb)`
+        : `${signedNetBb} bb`);
   }
 
   if (signedNetChips != null) {
@@ -377,6 +801,7 @@ export function parseManualActionText(rawText, options = {}) {
       },
       board: {
         didReachFlop: didReach.value,
+        cards: boardCards,
       },
       heroStreetSummary,
       result: {

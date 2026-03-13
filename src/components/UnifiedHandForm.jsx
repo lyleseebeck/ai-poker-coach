@@ -6,10 +6,17 @@ import { buildHandRecordV2, createEmptyHandDraft, validateHandDraft } from '../l
 import { parseManualActionText } from '../lib/manualActionParser.js';
 import { parseIgnitionHandHistory } from '../lib/ignitionParser.js';
 import { normalizeHandFromText } from '../lib/aiNormalizeClient.js';
+import {
+  applyConflictResolution,
+  applyParsedFieldsToSnapshot,
+  buildNormalizeSnapshot,
+  formatConflictValue,
+  unresolvedConflictCount,
+} from '../lib/normalizeMerge.js';
 import { CardLogo } from './CardLogo.jsx';
 
 const ACTION_OPTIONS = [
-  { value: 'none', label: 'Select action' },
+  { value: 'none', label: 'Action' },
   { value: 'fold', label: 'Fold' },
   { value: 'check', label: 'Check' },
   { value: 'call', label: 'Call' },
@@ -19,11 +26,159 @@ const ACTION_OPTIONS = [
 ];
 
 const AI_FALLBACK_CONFIDENCE_THRESHOLD = 0.75;
+const DEFAULT_PRE_FLOP_OPEN_BB = 2.5;
+const DEFAULT_PRE_FLOP_3BET_BB = 8;
+const STREET_DECISION_ROW_CLASS = 'grid gap-2 items-center md:grid-cols-[170px,minmax(0,1fr)]';
+const STREET_DECISION_CONTROLS_CLASS = 'grid gap-2 sm:grid-cols-3';
 
 function numberOrNull(value) {
   if (value == null || value === '') return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function roundBb(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Number(n.toFixed(2));
+}
+
+function postedBlindBbByPosition(position) {
+  const pos = normalizePosition(position);
+  if (pos === 'SB') return 0.5;
+  if (pos === 'BB') return 1;
+  return 0;
+}
+
+function getLastHeroAction(summary) {
+  for (const street of ['river', 'turn', 'flop', 'preflop']) {
+    const action = String(summary?.[street]?.action || 'none').toLowerCase();
+    if (action && action !== 'none') return { street, action };
+  }
+  return { street: null, action: 'none' };
+}
+
+function estimateStreetContributionBb(street, decision, runningPotBb, heroPosition, assumptions) {
+  const action = String(decision?.action || 'none').toLowerCase();
+  if (action === 'none' || action === 'check') return 0;
+  if (action === 'fold') {
+    const streetNet = numberOrNull(decision?.streetNetBb);
+    return streetNet != null && streetNet < 0 ? Math.abs(streetNet) : 0;
+  }
+
+  const explicitAmount = numberOrNull(decision?.amountBb);
+  if (explicitAmount != null && explicitAmount >= 0) return explicitAmount;
+  const facingAmount = numberOrNull(decision?.facingAmountBb);
+  if (action === 'call' && facingAmount != null && facingAmount >= 0) {
+    return facingAmount;
+  }
+
+  if (street === 'preflop') {
+    if (action === 'call') {
+      assumptions.push('Assumed preflop call size as 2.5bb (standard open).');
+      return DEFAULT_PRE_FLOP_OPEN_BB;
+    }
+    if (action === 'raise') {
+      assumptions.push('Assumed preflop raise size as 8bb (standard 3-bet sizing).');
+      return DEFAULT_PRE_FLOP_3BET_BB;
+    }
+    if (action === 'all_in') {
+      assumptions.push('Assumed preflop all-in commit as 20bb due to missing size.');
+      return 20;
+    }
+    assumptions.push('Assumed preflop investment as 2.5bb due to missing size.');
+    return DEFAULT_PRE_FLOP_OPEN_BB;
+  }
+
+  const basePot = Math.max(numberOrNull(runningPotBb) || 0, 6);
+  if (action === 'call') {
+    assumptions.push(`Assumed ${street} call size as ~66% pot (${roundBb(basePot * 0.66)}bb).`);
+    return roundBb(basePot * 0.66) || 0;
+  }
+  if (action === 'bet') {
+    assumptions.push(`Assumed ${street} bet size as ~66% pot (${roundBb(basePot * 0.66)}bb).`);
+    return roundBb(basePot * 0.66) || 0;
+  }
+  if (action === 'raise') {
+    assumptions.push(`Assumed ${street} raise size as ~150% pot (${roundBb(basePot * 1.5)}bb).`);
+    return roundBb(basePot * 1.5) || 0;
+  }
+  if (action === 'all_in') {
+    const fallback = Math.max(roundBb(basePot * 1.5) || 0, 20);
+    assumptions.push(`Assumed ${street} all-in investment as ${fallback}bb due to missing size.`);
+    return fallback;
+  }
+
+  if (action === 'fold') {
+    return street === 'preflop' ? postedBlindBbByPosition(heroPosition) : 0;
+  }
+
+  return 0;
+}
+
+function buildStreetContributionEstimate(summary, heroPosition) {
+  const assumptions = [];
+  let heroInvestedBb = postedBlindBbByPosition(heroPosition);
+  let runningPotBb = 1.5;
+
+  for (const street of ['preflop', 'flop', 'turn', 'river']) {
+    const decision = summary?.[street] || {};
+    const contribution = estimateStreetContributionBb(
+      street,
+      decision,
+      runningPotBb,
+      heroPosition,
+      assumptions
+    );
+    heroInvestedBb += contribution;
+    runningPotBb += contribution * 2;
+
+    if (String(decision?.action || 'none').toLowerCase() === 'fold') {
+      break;
+    }
+  }
+
+  return {
+    heroInvestedBb: roundBb(heroInvestedBb),
+    assumptions,
+    lastAction: getLastHeroAction(summary),
+  };
+}
+
+function estimateNetBbFromSummary(summary, heroPosition) {
+  const estimate = buildStreetContributionEstimate(summary, heroPosition);
+
+  if (estimate.lastAction.action === 'fold') {
+    return {
+      estimatedNetBb: -roundBb(estimate.heroInvestedBb),
+      assumptions: [
+        `Estimated net result in BB as -${roundBb(estimate.heroInvestedBb)} based on inferred street investments.`,
+        ...estimate.assumptions,
+      ],
+    };
+  }
+
+  return {
+    estimatedNetBb: null,
+    assumptions: estimate.assumptions,
+  };
+}
+
+function evaluateFoldNetConsistency(summary, heroPosition, netBb) {
+  const netValue = numberOrNull(netBb);
+  if (netValue == null) return null;
+
+  const estimate = buildStreetContributionEstimate(summary, heroPosition);
+  if (estimate.lastAction.action !== 'fold') return null;
+
+  const expectedLoss = roundBb(estimate.heroInvestedBb);
+  if (expectedLoss == null) return null;
+  const mismatch = Math.abs(Math.abs(netValue) - expectedLoss);
+  return {
+    expectedNetBb: -expectedLoss,
+    mismatchBb: roundBb(mismatch) || 0,
+    assumptions: estimate.assumptions,
+  };
 }
 
 function normalizePosition(value) {
@@ -161,9 +316,11 @@ function inferStreetFromActionRow(action, fallbackStreet = 'unknown') {
 function createImportDecision(actionType, amount, bbSize) {
   const amountChips = numberOrNull(amount);
   const bb = numberOrNull(bbSize);
+  const amountBb = bb && amountChips != null ? amountChips / bb : null;
   return {
     action: actionType,
-    amountBb: bb && amountChips != null ? amountChips / bb : null,
+    amountBb,
+    facingAmountBb: actionType === 'call' ? amountBb : null,
     amountChips,
     source: 'imported',
   };
@@ -252,14 +409,31 @@ function summarizeAiProposal(proposal) {
   const fields = proposal?.parsedFields || {};
   const summary = [];
 
+  if (Array.isArray(fields?.hero?.cards) && fields.hero.cards.length === 2) {
+    summary.push(`Hero cards: ${fields.hero.cards.join(' ')}`);
+  } else if (fields?.hero?.handCode) {
+    summary.push(`Hero hand: ${fields.hero.handCode}`);
+  }
+
   const position = fields?.hero?.position;
   if (position) summary.push(`Hero position: ${position}`);
 
   const streetSummary = fields?.heroStreetSummary || {};
   for (const street of ['preflop', 'flop', 'turn', 'river']) {
-    const action = streetSummary?.[street]?.action;
+    const decision = streetSummary?.[street] || {};
+    const action = decision?.action;
     if (action && action !== 'none') {
-      summary.push(`${street}: ${action}`);
+      const streetBetBb = numberOrNull(decision.amountBb) ?? numberOrNull(decision.facingAmountBb);
+      const streetNetBb = numberOrNull(decision.streetNetBb);
+      if (streetBetBb != null && streetNetBb != null) {
+        summary.push(`${street}: ${action} ${streetBetBb}bb (street result ${streetNetBb}bb)`);
+      } else if (streetBetBb != null) {
+        summary.push(`${street}: ${action} ${streetBetBb}bb`);
+      } else if (streetNetBb != null) {
+        summary.push(`${street}: ${action} (street result ${streetNetBb}bb)`);
+      } else {
+        summary.push(`${street}: ${action}`);
+      }
     }
   }
 
@@ -267,6 +441,11 @@ function summarizeAiProposal(proposal) {
   if (netBb != null) summary.push(`Net BB: ${netBb}`);
   const netChips = fields?.result?.netChips;
   if (netChips != null) summary.push(`Net $: ${netChips}`);
+
+  const boardCards = Array.isArray(fields?.board?.cards) ? fields.board.cards : [];
+  if (boardCards.length >= 3) {
+    summary.push(`Board: ${boardCards.join(' ')}`);
+  }
 
   return summary;
 }
@@ -283,6 +462,8 @@ function mergeParsedIntoState(current, parsed, fillOnlyMissing) {
 
     const actionKey = `${street}Action`;
     const bbKey = `${street}AmountBb`;
+    const streetNetKey = `${street}StreetNetBb`;
+    const facingKey = `${street}FacingAmountBb`;
     const chipsKey = `${street}AmountChips`;
     const shouldSetAction = !fillOnlyMissing || next[actionKey] === 'none';
     if (shouldSetAction) next[actionKey] = parsedDecision.action;
@@ -290,6 +471,14 @@ function mergeParsedIntoState(current, parsed, fillOnlyMissing) {
     if (parsedDecision.amountBb != null) {
       const shouldSetAmountBb = !fillOnlyMissing || next[bbKey] === '';
       if (shouldSetAmountBb) next[bbKey] = String(parsedDecision.amountBb);
+    }
+    if (parsedDecision.facingAmountBb != null) {
+      const shouldSetFacingBb = !fillOnlyMissing || next[facingKey] === '';
+      if (shouldSetFacingBb) next[facingKey] = String(parsedDecision.facingAmountBb);
+    }
+    if (parsedDecision.streetNetBb != null) {
+      const shouldSetStreetNetBb = !fillOnlyMissing || next[streetNetKey] === '';
+      if (shouldSetStreetNetBb) next[streetNetKey] = String(parsedDecision.streetNetBb);
     }
     if (parsedDecision.amountChips != null) {
       const shouldSetAmountChips = !fillOnlyMissing || next[chipsKey] === '';
@@ -313,45 +502,47 @@ function StreetDecisionRow({
   street,
   label,
   action,
-  amountBb,
-  amountChips,
+  streetBetBb,
+  streetResultBb,
   setAction,
-  setAmountBb,
-  setAmountChips,
+  setStreetBetBb,
+  setStreetResultBb,
 }) {
   const inputClass =
-    'rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white';
+    'w-full min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white';
 
   return (
-    <div className="grid gap-2 md:grid-cols-[170px,1fr,130px,130px] items-center">
+    <div className={STREET_DECISION_ROW_CLASS}>
       <label className="text-sm font-medium text-slate-700">{label}</label>
-      <select
-        value={action}
-        onChange={(e) => setAction(e.target.value)}
-        className={inputClass}
-      >
-        {ACTION_OPTIONS.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <input
-        type="number"
-        step="0.1"
-        value={amountBb}
-        onChange={(e) => setAmountBb(e.target.value)}
-        className={inputClass}
-        placeholder="BB size"
-      />
-      <input
-        type="number"
-        step="0.01"
-        value={amountChips}
-        onChange={(e) => setAmountChips(e.target.value)}
-        className={inputClass}
-        placeholder="$ amount"
-      />
+      <div className={STREET_DECISION_CONTROLS_CLASS}>
+        <select
+          value={action}
+          onChange={(e) => setAction(e.target.value)}
+          className={inputClass}
+        >
+          {ACTION_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <input
+          type="number"
+          step="0.1"
+          value={streetBetBb}
+          onChange={(e) => setStreetBetBb(e.target.value)}
+          className={inputClass}
+          placeholder="Bet size (BB)"
+        />
+        <input
+          type="number"
+          step="0.1"
+          value={streetResultBb}
+          onChange={(e) => setStreetResultBb(e.target.value)}
+          className={inputClass}
+          placeholder="Street result (BB)"
+        />
+      </div>
     </div>
   );
 }
@@ -380,18 +571,28 @@ export function UnifiedHandForm({
   const [heroPosition, setHeroPosition] = useState('');
   const [sbSize, setSbSize] = useState('');
   const [bbSize, setBbSize] = useState('');
+  const [heroStackDepthBb, setHeroStackDepthBb] = useState('');
+  const [villainStackDepthBb, setVillainStackDepthBb] = useState('');
 
   const [preflopAction, setPreflopAction] = useState('none');
   const [preflopAmountBb, setPreflopAmountBb] = useState('');
+  const [preflopStreetNetBb, setPreflopStreetNetBb] = useState('');
+  const [preflopFacingAmountBb, setPreflopFacingAmountBb] = useState('');
   const [preflopAmountChips, setPreflopAmountChips] = useState('');
   const [flopAction, setFlopAction] = useState('none');
   const [flopAmountBb, setFlopAmountBb] = useState('');
+  const [flopStreetNetBb, setFlopStreetNetBb] = useState('');
+  const [flopFacingAmountBb, setFlopFacingAmountBb] = useState('');
   const [flopAmountChips, setFlopAmountChips] = useState('');
   const [turnAction, setTurnAction] = useState('none');
   const [turnAmountBb, setTurnAmountBb] = useState('');
+  const [turnStreetNetBb, setTurnStreetNetBb] = useState('');
+  const [turnFacingAmountBb, setTurnFacingAmountBb] = useState('');
   const [turnAmountChips, setTurnAmountChips] = useState('');
   const [riverAction, setRiverAction] = useState('none');
   const [riverAmountBb, setRiverAmountBb] = useState('');
+  const [riverStreetNetBb, setRiverStreetNetBb] = useState('');
+  const [riverFacingAmountBb, setRiverFacingAmountBb] = useState('');
   const [riverAmountChips, setRiverAmountChips] = useState('');
 
   const [netBb, setNetBb] = useState('');
@@ -410,7 +611,7 @@ export function UnifiedHandForm({
   const [aiError, setAiError] = useState('');
   const [aiProposal, setAiProposal] = useState(null);
   const [aiProposalSignature, setAiProposalSignature] = useState('');
-  const [aiConfirmedSignature, setAiConfirmedSignature] = useState('');
+  const [aiConflicts, setAiConflicts] = useState([]);
 
   const positions = POSITIONS_BY_PLAYERS[numPlayers] || [];
   const boardCards = useMemo(() => {
@@ -429,7 +630,7 @@ export function UnifiedHandForm({
       setAiError('');
       setAiProposal(null);
       setAiProposalSignature('');
-      setAiConfirmedSignature('');
+      setAiConflicts([]);
       return;
     }
     if (aiProposalSignature && aiProposalSignature !== signature) {
@@ -437,22 +638,30 @@ export function UnifiedHandForm({
       setAiError('');
       setAiProposal(null);
       setAiProposalSignature('');
-      setAiConfirmedSignature('');
+      setAiConflicts([]);
     }
   }, [manualActionText, aiProposalSignature]);
 
   const setFromMergedState = (next) => {
     setPreflopAction(next.preflopAction);
     setPreflopAmountBb(next.preflopAmountBb);
+    setPreflopStreetNetBb(next.preflopStreetNetBb);
+    setPreflopFacingAmountBb(next.preflopFacingAmountBb);
     setPreflopAmountChips(next.preflopAmountChips);
     setFlopAction(next.flopAction);
     setFlopAmountBb(next.flopAmountBb);
+    setFlopStreetNetBb(next.flopStreetNetBb);
+    setFlopFacingAmountBb(next.flopFacingAmountBb);
     setFlopAmountChips(next.flopAmountChips);
     setTurnAction(next.turnAction);
     setTurnAmountBb(next.turnAmountBb);
+    setTurnStreetNetBb(next.turnStreetNetBb);
+    setTurnFacingAmountBb(next.turnFacingAmountBb);
     setTurnAmountChips(next.turnAmountChips);
     setRiverAction(next.riverAction);
     setRiverAmountBb(next.riverAmountBb);
+    setRiverStreetNetBb(next.riverStreetNetBb);
+    setRiverFacingAmountBb(next.riverFacingAmountBb);
     setRiverAmountChips(next.riverAmountChips);
     setNetBb(next.netBb);
     setNetChips(next.netChips);
@@ -461,19 +670,86 @@ export function UnifiedHandForm({
   const getCurrentState = () => ({
     preflopAction,
     preflopAmountBb,
+    preflopStreetNetBb,
+    preflopFacingAmountBb,
     preflopAmountChips,
     flopAction,
     flopAmountBb,
+    flopStreetNetBb,
+    flopFacingAmountBb,
     flopAmountChips,
     turnAction,
     turnAmountBb,
+    turnStreetNetBb,
+    turnFacingAmountBb,
     turnAmountChips,
     riverAction,
     riverAmountBb,
+    riverStreetNetBb,
+    riverFacingAmountBb,
     riverAmountChips,
     netBb,
     netChips,
   });
+
+  const hasDidReachFlopSignal = (state = getCurrentState()) =>
+    noFlop ||
+    boardCards.length > 0 ||
+    state.flopAction !== 'none' ||
+    state.turnAction !== 'none' ||
+    state.riverAction !== 'none';
+
+  const buildSnapshot = (overrides = {}) =>
+    buildNormalizeSnapshot({
+      heroCard1,
+      heroCard2,
+      heroPosition,
+      didReachFlop: !noFlop,
+      didReachFlopFilled: hasDidReachFlopSignal(),
+      flop1,
+      flop2,
+      flop3,
+      turn,
+      river,
+      ...getCurrentState(),
+      ...overrides,
+    });
+
+  const applySnapshotToForm = (snapshot) => {
+    setHeroCard1(snapshot.heroCard1 || '');
+    setHeroCard2(snapshot.heroCard2 || '');
+    setHeroPosition(snapshot.heroPosition || '');
+    setNoFlop(!snapshot.didReachFlop);
+    setFlop1(snapshot.didReachFlop ? snapshot.flop1 || '' : '');
+    setFlop2(snapshot.didReachFlop ? snapshot.flop2 || '' : '');
+    setFlop3(snapshot.didReachFlop ? snapshot.flop3 || '' : '');
+    setTurn(snapshot.didReachFlop ? snapshot.turn || '' : '');
+    setRiver(snapshot.didReachFlop ? snapshot.river || '' : '');
+    setFromMergedState({
+      preflopAction: snapshot.preflopAction || 'none',
+      preflopAmountBb: snapshot.preflopAmountBb || '',
+      preflopStreetNetBb: snapshot.preflopStreetNetBb || '',
+      preflopFacingAmountBb: snapshot.preflopFacingAmountBb || '',
+      preflopAmountChips: snapshot.preflopAmountChips || '',
+      flopAction: snapshot.flopAction || 'none',
+      flopAmountBb: snapshot.flopAmountBb || '',
+      flopStreetNetBb: snapshot.flopStreetNetBb || '',
+      flopFacingAmountBb: snapshot.flopFacingAmountBb || '',
+      flopAmountChips: snapshot.flopAmountChips || '',
+      turnAction: snapshot.turnAction || 'none',
+      turnAmountBb: snapshot.turnAmountBb || '',
+      turnStreetNetBb: snapshot.turnStreetNetBb || '',
+      turnFacingAmountBb: snapshot.turnFacingAmountBb || '',
+      turnAmountChips: snapshot.turnAmountChips || '',
+      riverAction: snapshot.riverAction || 'none',
+      riverAmountBb: snapshot.riverAmountBb || '',
+      riverStreetNetBb: snapshot.riverStreetNetBb || '',
+      riverFacingAmountBb: snapshot.riverFacingAmountBb || '',
+      riverAmountChips: snapshot.riverAmountChips || '',
+      netBb: snapshot.netBb || '',
+      netChips: snapshot.netChips || '',
+    });
+  };
 
   const runManualParser = (fillOnlyMissing) => {
     const text = manualActionText.trim();
@@ -490,18 +766,38 @@ export function UnifiedHandForm({
       boardCardsCount: boardCards.length,
       heroPosition,
     });
-    const inferredHeroPosition =
-      String(parsed.parsedFields?.hero?.position || parsed.metadata?.heroPosition || '').trim();
+    const baseSnapshot = buildSnapshot();
+    const { nextSnapshot } = applyParsedFieldsToForm(
+      parsed.parsedFields,
+      fillOnlyMissing,
+      baseSnapshot
+    );
+    const merged = {
+      preflopAction: nextSnapshot.preflopAction,
+      preflopAmountBb: nextSnapshot.preflopAmountBb,
+      preflopStreetNetBb: nextSnapshot.preflopStreetNetBb,
+      preflopFacingAmountBb: nextSnapshot.preflopFacingAmountBb,
+      preflopAmountChips: nextSnapshot.preflopAmountChips,
+      flopAction: nextSnapshot.flopAction,
+      flopAmountBb: nextSnapshot.flopAmountBb,
+      flopStreetNetBb: nextSnapshot.flopStreetNetBb,
+      flopFacingAmountBb: nextSnapshot.flopFacingAmountBb,
+      flopAmountChips: nextSnapshot.flopAmountChips,
+      turnAction: nextSnapshot.turnAction,
+      turnAmountBb: nextSnapshot.turnAmountBb,
+      turnStreetNetBb: nextSnapshot.turnStreetNetBb,
+      turnFacingAmountBb: nextSnapshot.turnFacingAmountBb,
+      turnAmountChips: nextSnapshot.turnAmountChips,
+      riverAction: nextSnapshot.riverAction,
+      riverAmountBb: nextSnapshot.riverAmountBb,
+      riverStreetNetBb: nextSnapshot.riverStreetNetBb,
+      riverFacingAmountBb: nextSnapshot.riverFacingAmountBb,
+      riverAmountChips: nextSnapshot.riverAmountChips,
+      netBb: nextSnapshot.netBb,
+      netChips: nextSnapshot.netChips,
+    };
+    const inferredHeroPosition = nextSnapshot.heroPosition || '';
 
-    if (inferredHeroPosition) {
-      const shouldSetHeroPosition = !fillOnlyMissing || !heroPosition;
-      if (shouldSetHeroPosition) {
-        setHeroPosition(inferredHeroPosition);
-      }
-    }
-
-    const merged = mergeParsedIntoState(getCurrentState(), parsed, fillOnlyMissing);
-    setFromMergedState(merged);
     setParsePreview({
       overall: parsed.confidence?.overall ?? 0,
       missingRequired: parsed.missingRequired || [],
@@ -513,29 +809,21 @@ export function UnifiedHandForm({
     return { parsed, merged, inferredHeroPosition };
   };
 
-  const applyParsedFieldsToForm = (parsedFields, fillOnlyMissing = true) => {
-    if (!parsedFields) return;
-    const parsedLike = { parsedFields };
-    const merged = mergeParsedIntoState(getCurrentState(), parsedLike, fillOnlyMissing);
-    setFromMergedState(merged);
-
-    const inferredHeroPosition = String(parsedFields?.hero?.position || '').trim().toUpperCase();
-    if (inferredHeroPosition) {
-      if (!fillOnlyMissing || !heroPosition) {
-        setHeroPosition(inferredHeroPosition);
-      }
-    }
-
-    if (typeof parsedFields?.board?.didReachFlop === 'boolean') {
-      setNoFlop(!parsedFields.board.didReachFlop);
-    }
+  const applyParsedFieldsToForm = (parsedFields, fillOnlyMissing = true, baseSnapshot = null) => {
+    if (!parsedFields) return { conflicts: [] };
+    const activeSnapshot = baseSnapshot || buildSnapshot();
+    const { nextSnapshot, conflicts } = applyParsedFieldsToSnapshot(activeSnapshot, parsedFields, {
+      fillOnlyMissing,
+    });
+    applySnapshotToForm(nextSnapshot);
+    return { conflicts, nextSnapshot };
   };
 
   const requestAiProposal = async (manualParseResult) => {
     const signature = manualTextSignature(manualActionText);
     if (!signature) return null;
 
-    if (aiProposal && aiProposalSignature === signature && aiStatus === 'proposed') {
+    if (aiProposal && aiProposalSignature === signature && aiStatus !== 'error') {
       return aiProposal;
     }
 
@@ -549,6 +837,7 @@ export function UnifiedHandForm({
           numPlayers: numberOrNull(numPlayers),
           boardCards,
           didReachFlop: !noFlop,
+          heroCards: [heroCard1, heroCard2],
           stakes: {
             sb: numberOrNull(sbSize),
             bb: numberOrNull(bbSize),
@@ -561,31 +850,52 @@ export function UnifiedHandForm({
       const proposal = await normalizeHandFromText(payload);
       setAiProposal(proposal);
       setAiProposalSignature(signature);
-      setAiStatus('proposed');
+      setAiStatus('idle');
       setAiError('');
       return proposal;
     } catch (error) {
       setAiStatus('error');
       setAiProposal(null);
       setAiProposalSignature(signature);
+      setAiConflicts([]);
       setAiError(error?.message || 'AI assistant failed to return suggestions.');
       return null;
     }
   };
 
-  const handleApplyAiProposal = () => {
-    if (!aiProposal) return;
-    applyParsedFieldsToForm(aiProposal.parsedFields, true);
-    setAiConfirmedSignature(aiProposalSignature || manualTextSignature(manualActionText));
-    setAiStatus('confirmed');
+  const applyAiProposalWithConflicts = (proposal, options = {}) => {
+    if (!proposal?.parsedFields) return { conflicts: [] };
+    const { conflicts } = applyParsedFieldsToForm(
+      proposal.parsedFields,
+      true,
+      options.baseSnapshot || null
+    );
+    setAiConflicts(conflicts);
+    setAiStatus(unresolvedConflictCount(conflicts) > 0 ? 'conflicts' : 'applied');
     setAiError('');
+    return { conflicts };
   };
 
-  const handleDismissAiProposal = () => {
-    setAiStatus('idle');
-    setAiProposal(null);
-    setAiError('');
-    setAiConfirmedSignature('');
+  const handleResolveAiConflict = (conflictId, resolution) => {
+    const selectedConflict = aiConflicts.find((item) => item.id === conflictId);
+    if (!selectedConflict) return;
+
+    if (resolution === 'use_ai') {
+      const snapshot = buildSnapshot();
+      const nextSnapshot = applyConflictResolution(snapshot, selectedConflict, resolution);
+      applySnapshotToForm(nextSnapshot);
+    }
+
+    setAiConflicts((prev) => {
+      const next = prev.map((item) =>
+        item.id === conflictId
+          ? { ...item, resolution: resolution === 'keep' || resolution === 'use_ai' ? resolution : null }
+          : item
+      );
+      const unresolved = unresolvedConflictCount(next);
+      setAiStatus(unresolved > 0 ? 'conflicts' : 'applied');
+      return next;
+    });
   };
 
   const handlePlayersChange = (value) => {
@@ -601,7 +911,27 @@ export function UnifiedHandForm({
     if (!parseResult?.parsed) return;
 
     if (shouldRequestAiFallback(parseResult.parsed)) {
-      await requestAiProposal(parseResult.parsed);
+      const proposal = await requestAiProposal(parseResult.parsed);
+      if (!proposal) return;
+
+      const baseSnapshot = buildSnapshot({
+        ...(parseResult.merged || {}),
+        heroPosition: parseResult.inferredHeroPosition || heroPosition,
+      });
+      const { conflicts } = applyAiProposalWithConflicts(proposal, { baseSnapshot });
+      const unresolved = unresolvedConflictCount(conflicts);
+
+      setParsePreview({
+        overall:
+          proposal.overallConfidence ??
+          parseResult.parsed.confidence?.overall ??
+          0,
+        missingRequired: proposal.missingRequired || [],
+        message:
+          unresolved > 0
+            ? `AI auto-filled missing fields and found ${unresolved} conflicting field${unresolved === 1 ? '' : 's'} that require confirmation below.`
+            : 'AI auto-filled missing fields. Review and edit any field before saving.',
+      });
       return;
     }
 
@@ -609,7 +939,7 @@ export function UnifiedHandForm({
     setAiError('');
     setAiProposal(null);
     setAiProposalSignature('');
-    setAiConfirmedSignature('');
+    setAiConflicts([]);
   };
 
   const parseImportAndApply = ({ silent = false } = {}) => {
@@ -659,15 +989,23 @@ export function UnifiedHandForm({
 
       setPreflopAction(importSummary.preflop.action);
       setPreflopAmountBb(importSummary.preflop.amountBb != null ? String(importSummary.preflop.amountBb) : '');
+      setPreflopStreetNetBb('');
+      setPreflopFacingAmountBb(importSummary.preflop.facingAmountBb != null ? String(importSummary.preflop.facingAmountBb) : '');
       setPreflopAmountChips(importSummary.preflop.amountChips != null ? String(importSummary.preflop.amountChips) : '');
       setFlopAction(importSummary.flop.action);
       setFlopAmountBb(importSummary.flop.amountBb != null ? String(importSummary.flop.amountBb) : '');
+      setFlopStreetNetBb('');
+      setFlopFacingAmountBb(importSummary.flop.facingAmountBb != null ? String(importSummary.flop.facingAmountBb) : '');
       setFlopAmountChips(importSummary.flop.amountChips != null ? String(importSummary.flop.amountChips) : '');
       setTurnAction(importSummary.turn.action);
       setTurnAmountBb(importSummary.turn.amountBb != null ? String(importSummary.turn.amountBb) : '');
+      setTurnStreetNetBb('');
+      setTurnFacingAmountBb(importSummary.turn.facingAmountBb != null ? String(importSummary.turn.facingAmountBb) : '');
       setTurnAmountChips(importSummary.turn.amountChips != null ? String(importSummary.turn.amountChips) : '');
       setRiverAction(importSummary.river.action);
       setRiverAmountBb(importSummary.river.amountBb != null ? String(importSummary.river.amountBb) : '');
+      setRiverStreetNetBb('');
+      setRiverFacingAmountBb(importSummary.river.facingAmountBb != null ? String(importSummary.river.facingAmountBb) : '');
       setRiverAmountChips(importSummary.river.amountChips != null ? String(importSummary.river.amountChips) : '');
 
       if (netChipsValue != null) {
@@ -711,15 +1049,23 @@ export function UnifiedHandForm({
         prefill: {
           preflopAction: importSummary.preflop.action,
           preflopAmountBb: importSummary.preflop.amountBb != null ? String(importSummary.preflop.amountBb) : '',
+          preflopStreetNetBb: '',
+          preflopFacingAmountBb: importSummary.preflop.facingAmountBb != null ? String(importSummary.preflop.facingAmountBb) : '',
           preflopAmountChips: importSummary.preflop.amountChips != null ? String(importSummary.preflop.amountChips) : '',
           flopAction: importSummary.flop.action,
           flopAmountBb: importSummary.flop.amountBb != null ? String(importSummary.flop.amountBb) : '',
+          flopStreetNetBb: '',
+          flopFacingAmountBb: importSummary.flop.facingAmountBb != null ? String(importSummary.flop.facingAmountBb) : '',
           flopAmountChips: importSummary.flop.amountChips != null ? String(importSummary.flop.amountChips) : '',
           turnAction: importSummary.turn.action,
           turnAmountBb: importSummary.turn.amountBb != null ? String(importSummary.turn.amountBb) : '',
+          turnStreetNetBb: '',
+          turnFacingAmountBb: importSummary.turn.facingAmountBb != null ? String(importSummary.turn.facingAmountBb) : '',
           turnAmountChips: importSummary.turn.amountChips != null ? String(importSummary.turn.amountChips) : '',
           riverAction: importSummary.river.action,
           riverAmountBb: importSummary.river.amountBb != null ? String(importSummary.river.amountBb) : '',
+          riverStreetNetBb: '',
+          riverFacingAmountBb: importSummary.river.facingAmountBb != null ? String(importSummary.river.facingAmountBb) : '',
           riverAmountChips: importSummary.river.amountChips != null ? String(importSummary.river.amountChips) : '',
           netBb: netBbValue != null ? String(netBbValue) : '',
           netChips: netChipsValue != null ? String(netChipsValue) : '',
@@ -739,6 +1085,11 @@ export function UnifiedHandForm({
         reachedStreet,
         expectedBoardCards,
       });
+      setAiStatus('idle');
+      setAiError('');
+      setAiProposal(null);
+      setAiProposalSignature('');
+      setAiConflicts([]);
       return nextImport;
     } catch (error) {
       if (!silent) setImportError('Parse error: ' + (error.message || String(error)));
@@ -750,6 +1101,14 @@ export function UnifiedHandForm({
     e.preventDefault();
     setFormErrors({});
     setImportError('');
+
+    const unresolvedCount = unresolvedConflictCount(aiConflicts);
+    if (unresolvedCount > 0) {
+      setFormErrors({
+        aiConflicts: `Resolve ${unresolvedCount} AI conflict${unresolvedCount === 1 ? '' : 's'} before saving.`,
+      });
+      return;
+    }
 
     const rawImport = importRawText.trim();
     let activeImport = null;
@@ -844,34 +1203,47 @@ export function UnifiedHandForm({
     draft.table.tableName = activeImport?.parsed?.tableName || null;
     draft.table.stakes.sb = numberOrNull(effectiveSbSize);
     draft.table.stakes.bb = numberOrNull(effectiveBbSize);
+    draft.table.stackDepthBb.hero = numberOrNull(heroStackDepthBb);
+    draft.table.stackDepthBb.villain = numberOrNull(villainStackDepthBb);
     draft.board.didReachFlop = effectiveDidReachFlop;
     draft.board.cards = effectiveBoardCards;
+    const resolveStreetBetBb = (street) =>
+      numberOrNull(mergedState[`${street}AmountBb`]) ??
+      numberOrNull(mergedState[`${street}FacingAmountBb`]);
     draft.heroStreetSummary.preflop = {
       action: mergedState.preflopAction,
-      amountBb: numberOrNull(mergedState.preflopAmountBb),
-      amountChips: numberOrNull(mergedState.preflopAmountChips),
+      amountBb: resolveStreetBetBb('preflop'),
+      streetNetBb: numberOrNull(mergedState.preflopStreetNetBb),
+      facingAmountBb: resolveStreetBetBb('preflop'),
+      amountChips: null,
       source: activeImport ? 'imported' : 'manual',
     };
     draft.heroStreetSummary.flop = {
       action: mergedState.flopAction,
-      amountBb: numberOrNull(mergedState.flopAmountBb),
-      amountChips: numberOrNull(mergedState.flopAmountChips),
+      amountBb: resolveStreetBetBb('flop'),
+      streetNetBb: numberOrNull(mergedState.flopStreetNetBb),
+      facingAmountBb: resolveStreetBetBb('flop'),
+      amountChips: null,
       source: activeImport ? 'imported' : 'manual',
     };
     draft.heroStreetSummary.turn = {
       action: mergedState.turnAction,
-      amountBb: numberOrNull(mergedState.turnAmountBb),
-      amountChips: numberOrNull(mergedState.turnAmountChips),
+      amountBb: resolveStreetBetBb('turn'),
+      streetNetBb: numberOrNull(mergedState.turnStreetNetBb),
+      facingAmountBb: resolveStreetBetBb('turn'),
+      amountChips: null,
       source: activeImport ? 'imported' : 'manual',
     };
     draft.heroStreetSummary.river = {
       action: mergedState.riverAction,
-      amountBb: numberOrNull(mergedState.riverAmountBb),
-      amountChips: numberOrNull(mergedState.riverAmountChips),
+      amountBb: resolveStreetBetBb('river'),
+      streetNetBb: numberOrNull(mergedState.riverStreetNetBb),
+      facingAmountBb: resolveStreetBetBb('river'),
+      amountChips: null,
       source: activeImport ? 'imported' : 'manual',
     };
     draft.result.netBb = numberOrNull(mergedState.netBb);
-    draft.result.netChips = numberOrNull(mergedState.netChips);
+    draft.result.netChips = null;
     draft.timeline = activeImport
       ? { actions: activeImport.timeline || [] }
       : null;
@@ -884,23 +1256,99 @@ export function UnifiedHandForm({
       manualActionText: manualActionText.trim() ? 'manual' : 'manual',
     };
 
-    const validation = validateHandDraft(draft, { requireBb: true });
+    const assumptionNotes = [];
+    if (manualParseResult?.parsed?.evidenceSnippets) {
+      for (const [field, note] of Object.entries(manualParseResult.parsed.evidenceSnippets)) {
+        if (!/assumed/i.test(String(note || ''))) continue;
+        assumptionNotes.push(`${field}: ${String(note)}`);
+      }
+    }
+
+    if (draft.result.netBb == null) {
+      const estimate = estimateNetBbFromSummary(draft.heroStreetSummary, effectiveHeroPosition);
+      if (estimate.estimatedNetBb != null) {
+        draft.result.netBb = estimate.estimatedNetBb;
+        assumptionNotes.push(...estimate.assumptions);
+      }
+    }
+    const bbForChipDerive = numberOrNull(effectiveBbSize);
+    if (draft.result.netBb != null && bbForChipDerive != null && bbForChipDerive > 0) {
+      draft.result.netChips = Number((draft.result.netBb * bbForChipDerive).toFixed(4));
+    }
+
+    const netConsistency = evaluateFoldNetConsistency(
+      draft.heroStreetSummary,
+      effectiveHeroPosition,
+      draft.result.netBb
+    );
+    if (netConsistency?.assumptions?.length) {
+      assumptionNotes.push(...netConsistency.assumptions);
+    }
+    if (netConsistency && netConsistency.mismatchBb > 0.75) {
+      setFormErrors({
+        netBb:
+          `Deterministic check failed: net BB (${draft.result.netBb}) does not match fold-loss total ` +
+          `from street amounts (${netConsistency.expectedNetBb}). Update street amounts or net BB.`,
+      });
+      return;
+    }
+
+    const assumptionSet = [...new Set(assumptionNotes.filter(Boolean))];
+    if (assumptionSet.length > 0) {
+      const assumptionMessage = [
+        'I made assumptions for missing fields:',
+        ...assumptionSet.map((line) => `- ${line}`),
+        '',
+        'Click OK to save this hand with these assumptions, or Cancel to edit first.',
+      ].join('\n');
+      const accepted = window.confirm(assumptionMessage);
+      if (!accepted) {
+        setFormErrors({
+          assumptions: 'Save canceled. Review the assumed fields and try again.',
+        });
+        return;
+      }
+    }
+
+    const validation = validateHandDraft(draft, { requireBb: false });
     const currentManualSignature = manualTextSignature(manualActionText);
     const shouldTryAiFallback =
       !activeImport &&
       Boolean(currentManualSignature) &&
       Boolean(manualParseResult?.parsed) &&
       shouldRequestAiFallback(manualParseResult.parsed);
-    const aiAlreadyConfirmed =
+    const hasCurrentAiProposal =
       Boolean(currentManualSignature) &&
-      currentManualSignature === aiConfirmedSignature;
+      aiProposalSignature === currentManualSignature &&
+      Boolean(aiProposal);
 
-    if (!validation.isValid && shouldTryAiFallback && !aiAlreadyConfirmed) {
+    if (!validation.isValid && shouldTryAiFallback && !hasCurrentAiProposal) {
       const proposal = await requestAiProposal(manualParseResult.parsed);
+      let unresolved = 0;
+      if (proposal) {
+        const baseSnapshot = buildSnapshot({
+          ...mergedState,
+          heroPosition: effectiveHeroPosition,
+          didReachFlop: effectiveDidReachFlop,
+          didReachFlopFilled: true,
+        });
+        const { conflicts } = applyAiProposalWithConflicts(proposal, { baseSnapshot });
+        unresolved = unresolvedConflictCount(conflicts);
+        setParsePreview({
+          overall: proposal.overallConfidence ?? parsePreview?.overall ?? 0,
+          missingRequired: proposal.missingRequired || [],
+          message:
+            unresolved > 0
+              ? `AI found ${unresolved} conflict${unresolved === 1 ? '' : 's'}. Resolve them below before saving.`
+              : 'AI auto-filled missing fields. Review and save again.',
+        });
+      }
       setFormErrors({
         ...validation.errors,
         aiReview: proposal
-          ? 'AI suggestions are ready. Review and apply them, or continue filling fields manually.'
+          ? unresolved > 0
+            ? 'AI conflicts were detected. Resolve them before saving.'
+            : 'AI suggestions were auto-applied to missing fields. Review and save again.'
           : 'AI suggestions could not be loaded. Fill required fields manually and try saving again.',
       });
       return;
@@ -912,7 +1360,7 @@ export function UnifiedHandForm({
     }
 
     try {
-      const hand = buildHandRecordV2(draft, { requireBb: true });
+      const hand = buildHandRecordV2(draft, { requireBb: false });
       const hands = getHands();
       hands.push(hand);
       saveHands(hands);
@@ -922,17 +1370,27 @@ export function UnifiedHandForm({
       setHeroPosition('');
       setSbSize('');
       setBbSize('');
+      setHeroStackDepthBb('');
+      setVillainStackDepthBb('');
       setPreflopAction('none');
       setPreflopAmountBb('');
+      setPreflopStreetNetBb('');
+      setPreflopFacingAmountBb('');
       setPreflopAmountChips('');
       setFlopAction('none');
       setFlopAmountBb('');
+      setFlopStreetNetBb('');
+      setFlopFacingAmountBb('');
       setFlopAmountChips('');
       setTurnAction('none');
       setTurnAmountBb('');
+      setTurnStreetNetBb('');
+      setTurnFacingAmountBb('');
       setTurnAmountChips('');
       setRiverAction('none');
       setRiverAmountBb('');
+      setRiverStreetNetBb('');
+      setRiverFacingAmountBb('');
       setRiverAmountChips('');
       setNetBb('');
       setNetChips('');
@@ -949,7 +1407,7 @@ export function UnifiedHandForm({
       setAiError('');
       setAiProposal(null);
       setAiProposalSignature('');
-      setAiConfirmedSignature('');
+      setAiConflicts([]);
     } catch (error) {
       setFormErrors(error?.validation?.errors || { form: error.message || 'Unable to save hand.' });
     }
@@ -1010,9 +1468,9 @@ export function UnifiedHandForm({
 
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Table context</label>
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-4">
             <div>
-              <span className="text-xs text-slate-500">Players at table</span>
+              <span className="mb-1 flex min-h-[2.5rem] items-end text-xs text-slate-500">Players at table</span>
               <select
                 value={numPlayers}
                 onChange={(e) => handlePlayersChange(e.target.value)}
@@ -1026,18 +1484,7 @@ export function UnifiedHandForm({
               </select>
             </div>
             <div>
-              <span className="text-xs text-slate-500">Small blind (optional)</span>
-              <input
-                type="number"
-                step="0.01"
-                value={sbSize}
-                onChange={(e) => setSbSize(e.target.value)}
-                className={inputClass}
-                placeholder="e.g. 0.5"
-              />
-            </div>
-            <div>
-              <span className="text-xs text-slate-500">Big blind (required)</span>
+              <span className="mb-1 flex min-h-[2.5rem] items-end text-xs text-slate-500">Big blind (optional)</span>
               <input
                 type="number"
                 step="0.01"
@@ -1045,6 +1492,28 @@ export function UnifiedHandForm({
                 onChange={(e) => setBbSize(e.target.value)}
                 className={inputClass}
                 placeholder="e.g. 1"
+              />
+            </div>
+            <div>
+              <span className="mb-1 flex min-h-[2.5rem] items-end text-xs text-slate-500">Hero stack (BB, optional)</span>
+              <input
+                type="number"
+                step="0.1"
+                value={heroStackDepthBb}
+                onChange={(e) => setHeroStackDepthBb(e.target.value)}
+                className={inputClass}
+                placeholder="e.g. 100"
+              />
+            </div>
+            <div>
+              <span className="mb-1 flex min-h-[2.5rem] items-end text-xs text-slate-500">Villain stack (BB, optional)</span>
+              <input
+                type="number"
+                step="0.1"
+                value={villainStackDepthBb}
+                onChange={(e) => setVillainStackDepthBb(e.target.value)}
+                className={inputClass}
+                placeholder="e.g. 100"
               />
             </div>
           </div>
@@ -1072,26 +1541,35 @@ export function UnifiedHandForm({
 
         <div className="space-y-2">
           <label className="block text-sm font-medium text-slate-600">Hero decisions by street</label>
+          <p className="text-xs text-slate-500">
+            Street bet size is the max BB size relevant to your decision. Street result is your win/loss on that street (useful when a fold ends the action).
+          </p>
           <StreetDecisionRow
             street="preflop"
             label="Preflop (required)"
             action={preflopAction}
-            amountBb={preflopAmountBb}
-            amountChips={preflopAmountChips}
+            streetBetBb={preflopAmountBb}
+            streetResultBb={preflopStreetNetBb}
             setAction={setPreflopAction}
-            setAmountBb={setPreflopAmountBb}
-            setAmountChips={setPreflopAmountChips}
+            setStreetBetBb={(value) => {
+              setPreflopAmountBb(value);
+              setPreflopFacingAmountBb(value);
+            }}
+            setStreetResultBb={setPreflopStreetNetBb}
           />
           {showFlop && (
             <StreetDecisionRow
               street="flop"
               label="Flop"
               action={flopAction}
-              amountBb={flopAmountBb}
-              amountChips={flopAmountChips}
+              streetBetBb={flopAmountBb}
+              streetResultBb={flopStreetNetBb}
               setAction={setFlopAction}
-              setAmountBb={setFlopAmountBb}
-              setAmountChips={setFlopAmountChips}
+              setStreetBetBb={(value) => {
+                setFlopAmountBb(value);
+                setFlopFacingAmountBb(value);
+              }}
+              setStreetResultBb={setFlopStreetNetBb}
             />
           )}
           {showTurn && (
@@ -1099,11 +1577,14 @@ export function UnifiedHandForm({
               street="turn"
               label="Turn"
               action={turnAction}
-              amountBb={turnAmountBb}
-              amountChips={turnAmountChips}
+              streetBetBb={turnAmountBb}
+              streetResultBb={turnStreetNetBb}
               setAction={setTurnAction}
-              setAmountBb={setTurnAmountBb}
-              setAmountChips={setTurnAmountChips}
+              setStreetBetBb={(value) => {
+                setTurnAmountBb(value);
+                setTurnFacingAmountBb(value);
+              }}
+              setStreetResultBb={setTurnStreetNetBb}
             />
           )}
           {showRiver && (
@@ -1111,16 +1592,19 @@ export function UnifiedHandForm({
               street="river"
               label="River"
               action={riverAction}
-              amountBb={riverAmountBb}
-              amountChips={riverAmountChips}
+              streetBetBb={riverAmountBb}
+              streetResultBb={riverStreetNetBb}
               setAction={setRiverAction}
-              setAmountBb={setRiverAmountBb}
-              setAmountChips={setRiverAmountChips}
+              setStreetBetBb={(value) => {
+                setRiverAmountBb(value);
+                setRiverFacingAmountBb(value);
+              }}
+              setStreetResultBb={setRiverStreetNetBb}
             />
           )}
         </div>
 
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-1">
           <div>
             <label className="block text-sm font-medium text-slate-600 mb-1">Net result (BB, required)</label>
             <input
@@ -1131,17 +1615,9 @@ export function UnifiedHandForm({
               className={inputClass}
               placeholder="e.g. -18 or 12.5"
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">Net result ($, optional)</label>
-            <input
-              type="number"
-              step="0.01"
-              value={netChips}
-              onChange={(e) => setNetChips(e.target.value)}
-              className={inputClass}
-              placeholder="e.g. -18.00"
-            />
+            <p className="mt-1 text-xs text-slate-500">
+              Dollar result is derived automatically from net BB when Big blind size is provided.
+            </p>
           </div>
         </div>
 
@@ -1184,39 +1660,77 @@ export function UnifiedHandForm({
           {aiError && (
             <p className="text-xs text-red-600 mt-1">{aiError}</p>
           )}
-          {aiStatus === 'proposed' && aiProposal && (
-            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-              <p className="text-xs font-medium text-amber-800">AI suggestions ready</p>
-              <p className="text-xs text-amber-700 mt-1">
-                Review and apply before save if you want these inferred values.
+          {aiProposal && aiStatus !== 'loading' && (
+            <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+              <p className="text-xs font-medium text-emerald-800">AI normalization complete</p>
+              <p className="text-xs text-emerald-700 mt-1">
+                Missing fields were auto-filled when possible. Resolve conflicts below before saving.
               </p>
+              {aiProposal?.meta?.model && (
+                <p className="text-[11px] text-emerald-700 mt-1">
+                  Model: {aiProposal.meta.model}
+                  {aiProposal?.meta?.fallbackUsed ? ' (fallback mode)' : ''}
+                </p>
+              )}
               {summarizeAiProposal(aiProposal).length > 0 && (
-                <ul className="mt-1 text-xs text-amber-800 list-disc list-inside">
+                <ul className="mt-1 text-xs text-emerald-800 list-disc list-inside">
                   {summarizeAiProposal(aiProposal).map((line) => (
                     <li key={line}>{line}</li>
                   ))}
                 </ul>
               )}
-              <div className="mt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleApplyAiProposal}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition"
-                >
-                  Apply AI suggestions
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDismissAiProposal}
-                  className="px-3 py-1.5 rounded-lg bg-slate-200 text-slate-700 text-xs font-medium hover:bg-slate-300 transition"
-                >
-                  Dismiss
-                </button>
+            </div>
+          )}
+          {aiConflicts.length > 0 && (
+            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+              <p className="text-xs font-medium text-amber-900">
+                Resolve AI conflicts ({unresolvedConflictCount(aiConflicts)} unresolved)
+              </p>
+              <div className="mt-2 space-y-2">
+                {aiConflicts.map((conflict) => (
+                  <div key={conflict.id} className="rounded-md border border-amber-200 bg-white px-2 py-2">
+                    <p className="text-xs font-medium text-slate-700">{conflict.label}</p>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      Current: {formatConflictValue(conflict.type, conflict.currentValue)}
+                    </p>
+                    <p className="text-xs text-slate-600">
+                      AI: {formatConflictValue(conflict.type, conflict.suggestedValue)}
+                    </p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleResolveAiConflict(conflict.id, 'keep')}
+                        className={
+                          'px-2 py-1 rounded text-xs font-medium transition ' +
+                          (conflict.resolution === 'keep'
+                            ? 'bg-slate-700 text-white'
+                            : 'bg-slate-200 text-slate-700 hover:bg-slate-300')
+                        }
+                      >
+                        Keep mine
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleResolveAiConflict(conflict.id, 'use_ai')}
+                        className={
+                          'px-2 py-1 rounded text-xs font-medium transition ' +
+                          (conflict.resolution === 'use_ai'
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200')
+                        }
+                      >
+                        Use AI value
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
-          {aiStatus === 'confirmed' && (
-            <p className="text-xs text-emerald-700 mt-1">AI suggestions applied. You can still edit fields before saving.</p>
+          {aiStatus === 'applied' && aiConflicts.length === 0 && (
+            <p className="text-xs text-emerald-700 mt-1">
+              AI suggestions were applied to missing fields. You can still edit fields before saving.
+            </p>
           )}
         </div>
 
