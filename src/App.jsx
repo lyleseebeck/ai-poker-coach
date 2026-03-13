@@ -218,12 +218,12 @@ export function App() {
         clearCardBySlotId={clearCardBySlotId}
       />
 
+      <CoachPanel hands={hands} />
+
       <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
         <h2 className="text-lg font-medium text-slate-700 mb-4">Saved hands</h2>
         <HandList hands={hands} onDeleteHand={handleDeleteHand} />
       </section>
-
-      <CoachPanel hands={hands} />
 
       <section className="mt-6 bg-white rounded-xl shadow-sm border border-slate-200 p-6">
         <h2 className="text-lg font-medium text-slate-700 mb-1">Trash</h2>
