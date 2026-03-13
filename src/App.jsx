@@ -190,6 +190,15 @@ export function App() {
         </p>
       </header>
 
+      <section className="mb-8">
+        <img
+          src="/hero-jack-hearts.png"
+          alt="Jack of Hearts themed poker coaching illustration"
+          className="w-full rounded-xl border border-slate-200 shadow-sm"
+          loading="eager"
+        />
+      </section>
+
       <UnifiedHandForm
         onHandsChange={refreshHands}
         onHandSelectionReset={resetHandSelection}
