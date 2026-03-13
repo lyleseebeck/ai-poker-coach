@@ -60,12 +60,10 @@ Required:
 - `OPENROUTER_API_KEY=<your key>`
 - `COACH_OPENROUTER_MODELS=<comma-separated model ids, each containing :free>`
 
-Recommended quality-first model order:
-- `openai/gpt-oss-120b:free`
-- `meta-llama/llama-3.3-70b-instruct:free`
-- `google/gemma-3-27b-it:free`
-- `mistralai/mistral-small-3.1-24b-instruct:free`
-- `openai/gpt-oss-20b:free`
+Recommended compatibility-first model order:
+- `nvidia/nemotron-3-super-120b-a12b:free`
+- `stepfun/step-3.5-flash:free`
+- `arcee-ai/trinity-large-preview:free`
 
 Optional:
 - `COACH_REQUEST_TIMEOUT_MS=25000`
@@ -75,6 +73,7 @@ Optional:
 Free-only enforcement:
 - Every configured model must include `:free`.
 - Non-free model ids fail fast during provider initialization.
+- If a model returns `404` with `settings/privacy`, update OpenRouter privacy filters or remove that model from the list.
 
 ---
 
