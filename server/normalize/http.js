@@ -1,6 +1,13 @@
 import { normalizeHandFromText } from './normalizeService.js';
+import {
+  applyRateLimitHeaders,
+  DEFAULT_NORMALIZE_RATE_LIMIT_PER_MINUTE,
+  enforceIpRateLimit,
+  resolveRequestsPerMinute,
+} from '../rateLimit/upstashRateLimit.js';
 
 const MAX_BODY_BYTES = 200_000;
+const NORMALIZE_RATE_LIMIT_NAMESPACE = 'hand-normalize';
 
 function sendJson(res, statusCode, payload) {
   res.statusCode = statusCode;
@@ -53,7 +60,7 @@ async function readJsonBody(req) {
   });
 }
 
-export async function handleHandNormalizeRequest(req, res) {
+export async function handleHandNormalizeRequest(req, res, options = {}) {
   if (req.method !== 'POST') {
     sendJson(res, 405, {
       error: {
@@ -64,9 +71,38 @@ export async function handleHandNormalizeRequest(req, res) {
     return;
   }
 
+  const env = options.env || process.env;
+  const normalizeHandFromTextImpl =
+    typeof options.normalizeHandFromTextImpl === 'function' ? options.normalizeHandFromTextImpl : normalizeHandFromText;
+  const rateLimitImpl = typeof options.rateLimitImpl === 'function' ? options.rateLimitImpl : enforceIpRateLimit;
+  const requestsPerMinute = resolveRequestsPerMinute(
+    env?.RATE_LIMIT_NORMALIZE_PER_MINUTE,
+    DEFAULT_NORMALIZE_RATE_LIMIT_PER_MINUTE
+  );
+
   try {
+    const rateLimitResult = await rateLimitImpl({
+      req,
+      namespace: NORMALIZE_RATE_LIMIT_NAMESPACE,
+      requestsPerMinute,
+      env,
+      fetchImpl: options.fetchImpl,
+      nowMs: options.nowMs,
+    });
+
+    if (!rateLimitResult?.allowed) {
+      applyRateLimitHeaders(res, rateLimitResult);
+      sendJson(res, 429, {
+        error: {
+          code: 'RATE_LIMITED',
+          message: `Rate limit exceeded. Try again in ${rateLimitResult.retryAfterSeconds || 1}s.`,
+        },
+      });
+      return;
+    }
+
     const body = await readJsonBody(req);
-    const response = await normalizeHandFromText(body);
+    const response = await normalizeHandFromTextImpl(body);
     sendJson(res, 200, response);
   } catch (error) {
     const statusCode = Number(error?.statusCode) || 500;

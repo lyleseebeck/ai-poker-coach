@@ -21,7 +21,7 @@ Core features:
    ```bash
    cp .env.example .env
    ```
-   Fill in `OPENROUTER_API_KEY` and your free-model list.
+   Fill in `OPENROUTER_API_KEY` (model list is optional).
 
 3. Start dev server:
    ```bash
@@ -58,23 +58,32 @@ Core features:
 Required:
 - `COACH_PROVIDER=openrouter`
 - `OPENROUTER_API_KEY=<your key>`
+- `UPSTASH_REDIS_REST_URL=<your upstash redis rest url>` (**required in production**)
+- `UPSTASH_REDIS_REST_TOKEN=<your upstash redis rest token>` (**required in production**)
+
+Optional:
 - `COACH_OPENROUTER_MODELS=<comma-separated model ids, each containing :free>`
   If omitted/partial, the server auto-appends a built-in free fallback chain.
+- `COACH_REQUEST_TIMEOUT_MS=25000`
+- `COACH_SITE_URL=http://localhost:5173`
+- `COACH_APP_NAME=AI Poker Coach`
+- `RATE_LIMIT_COACH_PER_MINUTE=5`
+- `RATE_LIMIT_NORMALIZE_PER_MINUTE=12`
 
 Recommended compatibility-first model order:
 - `nvidia/nemotron-3-super-120b-a12b:free`
 - `stepfun/step-3.5-flash:free`
 - `arcee-ai/trinity-large-preview:free`
 
-Optional:
-- `COACH_REQUEST_TIMEOUT_MS=25000`
-- `COACH_SITE_URL=http://localhost:5173`
-- `COACH_APP_NAME=AI Poker Coach`
-
 Free-only enforcement:
 - Every configured model must include `:free`.
 - Non-free model ids fail fast during provider initialization.
 - If a model returns `404` with `settings/privacy`, update OpenRouter privacy filters or remove that model from the list.
+
+Rate-limit enforcement:
+- `POST /api/coach-hand` and `POST /api/hand-normalize` are IP rate-limited with Upstash Redis.
+- In production, missing Upstash env vars return `503` so the app cannot launch unprotected.
+- Throttled requests return `429` with `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`.
 
 ---
 
@@ -179,20 +188,23 @@ Error response details for strict failures:
 
 ## Deployment notes
 
+- `vercel.json` configures Vercel build/output for this Vite app.
 - A deployable Vercel-style route is provided at `api/coach-hand.js`.
+- A deployable Vercel-style route is provided at `api/hand-normalize.js`.
 - Local dev and preview both expose `/api/coach-hand` through Vite middleware.
+- Local dev and preview both expose `/api/hand-normalize` through Vite middleware.
 - Core coach logic lives in `server/coach/*` so route wrappers stay thin.
 
 ---
 
-## Security hardening for public hosting (deferred)
+## Security hardening for public hosting
 
 Current status:
-- For local testing, coach endpoint limits/auth are intentionally not enforced.
-- This is acceptable for local/private development but not safe for an internet-exposed deployment.
+- IP rate limiting is enforced on both public API endpoints when Upstash is configured.
+- In production, missing limiter config returns `503` (fail closed) to avoid accidental unprotected launch.
 
-Primary risk to address before public launch:
-- `POST /api/coach-hand` is currently callable without user auth, so a public deployment could be abused to consume OpenRouter quota.
+Remaining primary risk:
+- `POST /api/coach-hand` is still unauthenticated, so shared/public links can consume OpenRouter quota.
 
 Hardening options (recommended order):
 1. Protect the deployed app (password/access gate) for private beta.
@@ -200,9 +212,6 @@ Hardening options (recommended order):
 3. Add endpoint rate limiting and abuse controls (per IP/user, burst + cooldown).
 4. Redact internal error details returned to clients (keep detailed logs server-side only).
 5. Keep provider budget caps/alerts and key rotation policy as blast-radius control.
-
-Why this is deferred now:
-- We are prioritizing fast local iteration/testing and will apply these controls once the app is hosted publicly.
 
 ---
 
@@ -230,6 +239,8 @@ server/
     normalizePrompt.js
     normalizeSchema.js
     http.js
+  rateLimit/
+    upstashRateLimit.js
 api/
   coach-hand.js
   hand-normalize.js
