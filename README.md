@@ -59,6 +59,7 @@ Required:
 - `COACH_PROVIDER=openrouter`
 - `OPENROUTER_API_KEY=<your key>`
 - `COACH_OPENROUTER_MODELS=<comma-separated model ids, each containing :free>`
+  If omitted/partial, the server auto-appends a built-in free fallback chain.
 
 Recommended compatibility-first model order:
 - `nvidia/nemotron-3-super-120b-a12b:free`

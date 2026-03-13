@@ -2,6 +2,11 @@ import { createCoachError } from '../errors.js';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_TIMEOUT_MS = 25000;
+export const DEFAULT_OPENROUTER_FREE_MODEL_FALLBACKS = [
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'stepfun/step-3.5-flash:free',
+  'arcee-ai/trinity-large-preview:free',
+];
 
 function parseTimeoutMs(value, fallback = DEFAULT_TIMEOUT_MS) {
   const n = Number(value);
@@ -9,20 +14,13 @@ function parseTimeoutMs(value, fallback = DEFAULT_TIMEOUT_MS) {
   return Math.min(Math.max(Math.round(n), 1000), 120000);
 }
 
-function normalizeModelList(rawModels) {
+function normalizeModelList(rawModels, fallbackModels = DEFAULT_OPENROUTER_FREE_MODEL_FALLBACKS) {
   const list = Array.isArray(rawModels)
     ? rawModels
     : String(rawModels || '')
         .split(',')
         .map((item) => item.trim())
         .filter(Boolean);
-
-  if (list.length === 0) {
-    throw createCoachError('COACH_OPENROUTER_MODELS is required and must include at least one free model.', {
-      statusCode: 500,
-      code: 'COACH_CONFIG',
-    });
-  }
 
   for (const model of list) {
     if (!model.includes(':free')) {
@@ -33,7 +31,30 @@ function normalizeModelList(rawModels) {
     }
   }
 
-  return list;
+  const merged = [];
+  const seen = new Set();
+  for (const model of [...list, ...fallbackModels]) {
+    const trimmed = String(model || '').trim();
+    if (!trimmed) continue;
+    if (!trimmed.includes(':free')) {
+      throw createCoachError(`Model must include ":free" for free-only policy: ${trimmed}`, {
+        statusCode: 500,
+        code: 'COACH_CONFIG',
+      });
+    }
+    if (seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    merged.push(trimmed);
+  }
+
+  if (merged.length === 0) {
+    throw createCoachError('No free OpenRouter models configured or available for fallback.', {
+      statusCode: 500,
+      code: 'COACH_CONFIG',
+    });
+  }
+
+  return merged;
 }
 
 function readErrorDetail(payloadText) {
