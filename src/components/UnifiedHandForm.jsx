@@ -1422,7 +1422,7 @@ export function UnifiedHandForm({
           <label className="block text-sm font-medium text-slate-600 mb-1">Table context</label>
           <div className="grid gap-3 md:grid-cols-5">
             <div>
-              <span className="text-xs text-slate-500">Players at table</span>
+              <span className="mb-1 flex min-h-[2.5rem] items-end text-xs text-slate-500">Players at table</span>
               <select
                 value={numPlayers}
                 onChange={(e) => handlePlayersChange(e.target.value)}
@@ -1436,7 +1436,7 @@ export function UnifiedHandForm({
               </select>
             </div>
             <div>
-              <span className="text-xs text-slate-500">Small blind (optional)</span>
+              <span className="mb-1 flex min-h-[2.5rem] items-end text-xs text-slate-500">Small blind (optional)</span>
               <input
                 type="number"
                 step="0.01"
@@ -1447,7 +1447,7 @@ export function UnifiedHandForm({
               />
             </div>
             <div>
-              <span className="text-xs text-slate-500">Big blind (optional)</span>
+              <span className="mb-1 flex min-h-[2.5rem] items-end text-xs text-slate-500">Big blind (optional)</span>
               <input
                 type="number"
                 step="0.01"
@@ -1458,7 +1458,7 @@ export function UnifiedHandForm({
               />
             </div>
             <div>
-              <span className="text-xs text-slate-500">Hero stack (BB, optional)</span>
+              <span className="mb-1 flex min-h-[2.5rem] items-end text-xs text-slate-500">Hero stack (BB, optional)</span>
               <input
                 type="number"
                 step="0.1"
@@ -1469,7 +1469,7 @@ export function UnifiedHandForm({
               />
             </div>
             <div>
-              <span className="text-xs text-slate-500">Villain stack (BB, optional)</span>
+              <span className="mb-1 flex min-h-[2.5rem] items-end text-xs text-slate-500">Villain stack (BB, optional)</span>
               <input
                 type="number"
                 step="0.1"
