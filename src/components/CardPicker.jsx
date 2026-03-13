@@ -44,41 +44,45 @@ export function CardPicker({
       <p className="text-sm text-slate-600 mb-3">
         Select <strong>rank</strong> then <strong>suit</strong>. The picker auto-fills the next empty slot (hole cards, then board), or click a slot to override.
       </p>
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Rank</span>
-        <div className="flex flex-wrap gap-1.5">
-          {RANKS.map((r) => (
-            <button
-              key={r}
-              type="button"
-              onClick={() => onSelectRank(selectedRank === r ? null : r)}
-              className={
-                'w-9 h-9 rounded-lg border font-medium text-sm focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 ' +
-                (selectedRank === r
-                  ? 'ring-2 ring-emerald-500 ring-offset-1 bg-emerald-50 border-slate-300 text-slate-700'
-                  : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100')
-              }
-            >
-              {r}
-            </button>
-          ))}
+      <div className="space-y-3">
+        <div>
+          <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Rank</span>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {RANKS.map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => onSelectRank(selectedRank === r ? null : r)}
+                className={
+                  'w-9 h-9 rounded-lg border font-medium text-sm focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 ' +
+                  (selectedRank === r
+                    ? 'ring-2 ring-emerald-500 ring-offset-1 bg-emerald-50 border-slate-300 text-slate-700'
+                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100')
+                }
+              >
+                {r}
+              </button>
+            ))}
+          </div>
         </div>
-        <span className="text-xs font-medium text-slate-500 uppercase tracking-wide ml-2">Suit</span>
-        <div className="flex gap-1.5">
-          {SUITS.map(({ key, symbol, title, red }) => (
-            <button
-              key={key}
-              type="button"
-              title={title}
-              onClick={() => handleSuitClick(key)}
-              className={
-                'w-10 h-9 rounded-lg border border-slate-300 bg-white text-xl hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 ' +
-                (red ? 'text-red-600' : '')
-              }
-            >
-              {symbol}
-            </button>
-          ))}
+        <div>
+          <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Suit</span>
+          <div className="mt-1 flex gap-1.5">
+            {SUITS.map(({ key, symbol, title, red }) => (
+              <button
+                key={key}
+                type="button"
+                title={title}
+                onClick={() => handleSuitClick(key)}
+                className={
+                  'w-10 h-9 rounded-lg border border-slate-300 bg-white text-xl hover:bg-slate-100 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1 ' +
+                  (red ? 'text-red-600' : '')
+                }
+              >
+                {symbol}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <p className="text-xs text-slate-400 mt-2">{hint}</p>

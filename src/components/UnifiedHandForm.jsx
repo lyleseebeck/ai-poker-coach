@@ -13,7 +13,9 @@ import {
   formatConflictValue,
   unresolvedConflictCount,
 } from '../lib/normalizeMerge.js';
+import { CardPicker } from './CardPicker.jsx';
 import { CardLogo } from './CardLogo.jsx';
+import { HandDetailsForm } from './HandDetailsForm.jsx';
 
 const ACTION_OPTIONS = [
   { value: 'none', label: 'Action' },
@@ -566,6 +568,13 @@ export function UnifiedHandForm({
   setFlop3,
   setTurn,
   setRiver,
+  effectiveTargetId,
+  cardPickerRank,
+  setCardPickerRank,
+  cardPickerError,
+  onApplyCard,
+  registerCardPickerTarget,
+  clearCardBySlotId,
 }) {
   const [numPlayers, setNumPlayers] = useState(8);
   const [heroPosition, setHeroPosition] = useState('');
@@ -598,6 +607,7 @@ export function UnifiedHandForm({
   const [netBb, setNetBb] = useState('');
   const [netChips, setNetChips] = useState('');
   const [knownCardsText, setKnownCardsText] = useState('');
+  const [entryMode, setEntryMode] = useState('manual');
   const [manualActionText, setManualActionText] = useState('');
   const [notes, setNotes] = useState('');
   const [formErrors, setFormErrors] = useState({});
@@ -612,6 +622,7 @@ export function UnifiedHandForm({
   const [aiProposal, setAiProposal] = useState(null);
   const [aiProposalSignature, setAiProposalSignature] = useState('');
   const [aiConflicts, setAiConflicts] = useState([]);
+  const [manualParseInFlight, setManualParseInFlight] = useState(false);
 
   const positions = POSITIONS_BY_PLAYERS[numPlayers] || [];
   const boardCards = useMemo(() => {
@@ -622,6 +633,7 @@ export function UnifiedHandForm({
   const showFlop = !noFlop;
   const showTurn = !noFlop && boardCards.length >= 4;
   const showRiver = !noFlop && boardCards.length >= 5;
+  const isImportMode = entryMode === 'ignition';
 
   useEffect(() => {
     const signature = manualTextSignature(manualActionText);
@@ -641,6 +653,12 @@ export function UnifiedHandForm({
       setAiConflicts([]);
     }
   }, [manualActionText, aiProposalSignature]);
+
+  useEffect(() => {
+    if (!isImportMode) {
+      setImportError('');
+    }
+  }, [isImportMode]);
 
   const setFromMergedState = (next) => {
     setPreflopAction(next.preflopAction);
@@ -907,39 +925,45 @@ export function UnifiedHandForm({
   };
 
   const handleParseManualText = async () => {
-    const parseResult = runManualParser(true);
-    if (!parseResult?.parsed) return;
+    if (manualParseInFlight) return;
+    setManualParseInFlight(true);
+    try {
+      const parseResult = runManualParser(true);
+      if (!parseResult?.parsed) return;
 
-    if (shouldRequestAiFallback(parseResult.parsed)) {
-      const proposal = await requestAiProposal(parseResult.parsed);
-      if (!proposal) return;
+      if (shouldRequestAiFallback(parseResult.parsed)) {
+        const proposal = await requestAiProposal(parseResult.parsed);
+        if (!proposal) return;
 
-      const baseSnapshot = buildSnapshot({
-        ...(parseResult.merged || {}),
-        heroPosition: parseResult.inferredHeroPosition || heroPosition,
-      });
-      const { conflicts } = applyAiProposalWithConflicts(proposal, { baseSnapshot });
-      const unresolved = unresolvedConflictCount(conflicts);
+        const baseSnapshot = buildSnapshot({
+          ...(parseResult.merged || {}),
+          heroPosition: parseResult.inferredHeroPosition || heroPosition,
+        });
+        const { conflicts } = applyAiProposalWithConflicts(proposal, { baseSnapshot });
+        const unresolved = unresolvedConflictCount(conflicts);
 
-      setParsePreview({
-        overall:
-          proposal.overallConfidence ??
-          parseResult.parsed.confidence?.overall ??
-          0,
-        missingRequired: proposal.missingRequired || [],
-        message:
-          unresolved > 0
-            ? `AI auto-filled missing fields and found ${unresolved} conflicting field${unresolved === 1 ? '' : 's'} that require confirmation below.`
-            : 'AI auto-filled missing fields. Review and edit any field before saving.',
-      });
-      return;
+        setParsePreview({
+          overall:
+            proposal.overallConfidence ??
+            parseResult.parsed.confidence?.overall ??
+            0,
+          missingRequired: proposal.missingRequired || [],
+          message:
+            unresolved > 0
+              ? `AI auto-filled missing fields and found ${unresolved} conflicting field${unresolved === 1 ? '' : 's'} that require confirmation below.`
+              : 'AI auto-filled missing fields. Review and edit any field before saving.',
+        });
+        return;
+      }
+
+      setAiStatus('idle');
+      setAiError('');
+      setAiProposal(null);
+      setAiProposalSignature('');
+      setAiConflicts([]);
+    } finally {
+      setManualParseInFlight(false);
     }
-
-    setAiStatus('idle');
-    setAiError('');
-    setAiProposal(null);
-    setAiProposalSignature('');
-    setAiConflicts([]);
   };
 
   const parseImportAndApply = ({ silent = false } = {}) => {
@@ -1113,7 +1137,7 @@ export function UnifiedHandForm({
     const rawImport = importRawText.trim();
     let activeImport = null;
     let importParsedNow = false;
-    if (rawImport) {
+    if (isImportMode && rawImport) {
       const isCurrent = parsedImport && parsedImportSnapshot === rawImport;
       if (isCurrent) {
         activeImport = parsedImport;
@@ -1395,6 +1419,7 @@ export function UnifiedHandForm({
       setNetBb('');
       setNetChips('');
       setKnownCardsText('');
+      setEntryMode('manual');
       setManualActionText('');
       setNotes('');
       setParsePreview(null);
@@ -1408,6 +1433,7 @@ export function UnifiedHandForm({
       setAiProposal(null);
       setAiProposalSignature('');
       setAiConflicts([]);
+      setManualParseInFlight(false);
     } catch (error) {
       setFormErrors(error?.validation?.errors || { form: error.message || 'Unable to save hand.' });
     }
@@ -1420,51 +1446,256 @@ export function UnifiedHandForm({
     <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-8">
       <h2 className="text-lg font-medium text-slate-700 mb-4">Hand capture</h2>
       <form onSubmit={handleSave} className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-slate-600 mb-1">Your hand (from above)</label>
-          <div className="flex items-center gap-2">
-            <CardLogo value={heroCard1} />
-            <CardLogo value={heroCard2} />
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+            <label className="text-sm font-medium text-slate-700">Hand input</label>
+            <div className="inline-flex rounded-lg border border-slate-300 bg-white p-1">
+              <button
+                type="button"
+                onClick={() => setEntryMode('manual')}
+                className={
+                  'px-3 py-1.5 rounded-md text-xs font-medium transition ' +
+                  (!isImportMode ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100')
+                }
+              >
+                Manual text
+              </button>
+              <button
+                type="button"
+                onClick={() => setEntryMode('ignition')}
+                className={
+                  'px-3 py-1.5 rounded-md text-xs font-medium transition ' +
+                  (isImportMode ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100')
+                }
+              >
+                Ignition import
+              </button>
+            </div>
+          </div>
+
+          {!isImportMode ? (
+            <>
+              <p className="text-xs text-slate-500 mb-2">
+                Describe the hand in plain text, then parse to auto-fill fields below.
+              </p>
+              <textarea
+                value={manualActionText}
+                onChange={(e) => setManualActionText(e.target.value)}
+                rows={4}
+                className={inputClass + ' resize-y'}
+                placeholder="Example: Preflop I raised to 3bb, c-bet flop 4bb, checked turn, folded river, lost 18bb."
+              />
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleParseManualText}
+                  disabled={manualParseInFlight}
+                  className={
+                    'px-3 py-2 rounded-lg text-sm font-medium transition ' +
+                    (manualParseInFlight
+                      ? 'bg-slate-100 text-slate-500 cursor-not-allowed'
+                      : 'bg-slate-200 text-slate-700 hover:bg-slate-300')
+                  }
+                >
+                  {manualParseInFlight ? 'Parsing...' : 'Parse & preview text'}
+                </button>
+                {parsePreview && (
+                  <span className="text-xs text-slate-500">
+                    Confidence: {(parsePreview.overall * 100).toFixed(0)}%
+                  </span>
+                )}
+              </div>
+              {manualParseInFlight && (
+                <p className="text-xs text-slate-600 mt-1">
+                  Parsing your hand now. AI fallback can take a few seconds.
+                </p>
+              )}
+              {parsePreview?.message && (
+                <p className="text-xs text-slate-500 mt-1">{parsePreview.message}</p>
+              )}
+              {parsePreview?.missingRequired?.length > 0 && (
+                <p className="text-xs text-amber-600 mt-1">
+                  Missing from text: {parsePreview.missingRequired.join(', ')}
+                </p>
+              )}
+              {aiStatus === 'loading' && (
+                <p className="text-xs text-emerald-700 mt-1">
+                  AI is still working on missing details...
+                </p>
+              )}
+              {aiError && (
+                <p className="text-xs text-red-600 mt-1">{aiError}</p>
+              )}
+              {aiProposal && aiStatus !== 'loading' && (
+                <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                  <p className="text-xs font-medium text-emerald-800">AI normalization complete</p>
+                  <p className="text-xs text-emerald-700 mt-1">
+                    Missing fields were auto-filled when possible. Resolve conflicts below before saving.
+                  </p>
+                  {aiProposal?.meta?.model && (
+                    <p className="text-[11px] text-emerald-700 mt-1">
+                      Model: {aiProposal.meta.model}
+                      {aiProposal?.meta?.fallbackUsed ? ' (fallback mode)' : ''}
+                    </p>
+                  )}
+                  {summarizeAiProposal(aiProposal).length > 0 && (
+                    <ul className="mt-1 text-xs text-emerald-800 list-disc list-inside">
+                      {summarizeAiProposal(aiProposal).map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+              {aiConflicts.length > 0 && (
+                <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                  <p className="text-xs font-medium text-amber-900">
+                    Resolve AI conflicts ({unresolvedConflictCount(aiConflicts)} unresolved)
+                  </p>
+                  <div className="mt-2 space-y-2">
+                    {aiConflicts.map((conflict) => (
+                      <div key={conflict.id} className="rounded-md border border-amber-200 bg-white px-2 py-2">
+                        <p className="text-xs font-medium text-slate-700">{conflict.label}</p>
+                        <p className="text-xs text-slate-600 mt-0.5">
+                          Current: {formatConflictValue(conflict.type, conflict.currentValue)}
+                        </p>
+                        <p className="text-xs text-slate-600">
+                          AI: {formatConflictValue(conflict.type, conflict.suggestedValue)}
+                        </p>
+                        <div className="mt-1 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleResolveAiConflict(conflict.id, 'keep')}
+                            className={
+                              'px-2 py-1 rounded text-xs font-medium transition ' +
+                              (conflict.resolution === 'keep'
+                                ? 'bg-slate-700 text-white'
+                                : 'bg-slate-200 text-slate-700 hover:bg-slate-300')
+                            }
+                          >
+                            Keep mine
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleResolveAiConflict(conflict.id, 'use_ai')}
+                            className={
+                              'px-2 py-1 rounded text-xs font-medium transition ' +
+                              (conflict.resolution === 'use_ai'
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200')
+                            }
+                          >
+                            Use AI value
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {aiStatus === 'applied' && aiConflicts.length === 0 && (
+                <p className="text-xs text-emerald-700 mt-1">
+                  AI suggestions were applied to missing fields. You can still edit fields before saving.
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-slate-500 mb-2">
+                Paste full hand history text, then parse to auto-fill this same form. Save still uses the single button below.
+              </p>
+              <textarea
+                value={importRawText}
+                onChange={(e) => setImportRawText(e.target.value)}
+                rows={5}
+                className={inputClass + ' resize-y font-mono'}
+                placeholder="Paste Ignition hand history here..."
+              />
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => parseImportAndApply({ silent: false })}
+                  className="px-3 py-2 rounded-lg bg-slate-200 text-slate-700 text-sm font-medium hover:bg-slate-300 transition"
+                >
+                  Parse & preview import
+                </button>
+                {importPreview && (
+                  <span className="text-xs text-slate-500">
+                    {importPreview.actionCount} actions parsed
+                  </span>
+                )}
+              </div>
+              {importPreview && (
+                <p className="text-xs text-slate-500 mt-1">
+                  {importPreview.tableName ? `Table: ${importPreview.tableName}. ` : ''}
+                  {importPreview.handId ? `Hand #${importPreview.handId}. ` : ''}
+                  {importPreview.heroPosition ? `Hero: ${importPreview.heroPosition}. ` : ''}
+                  {importPreview.reachedStreet ? `Reached: ${importPreview.reachedStreet}. ` : ''}
+                  {typeof importPreview.winLoss === 'number' ? `Win/Loss: ${importPreview.winLoss >= 0 ? '+' : ''}${importPreview.winLoss.toFixed(2)}.` : ''}
+                </p>
+              )}
+              {importError && <p className="text-xs text-red-600 mt-1">{importError}</p>}
+            </>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h3 className="text-lg font-medium text-slate-700 mb-2">Your hand (hero)</h3>
+          <p className="text-slate-500 text-sm mb-3">
+            Click a card then use the selector below, or pick rank/suit to fill the first empty slot.
+          </p>
+          <div className="flex gap-3">
+            {[
+              { id: 'hero-card1', label: 'Card 1', value: heroCard1 },
+              { id: 'hero-card2', label: 'Card 2', value: heroCard2 },
+            ].map((slot) => (
+              <div key={slot.id} className="flex flex-col items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => registerCardPickerTarget(slot.id)}
+                  className={
+                    'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus-visible:border-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-1 ' +
+                    (effectiveTargetId === slot.id ? 'border-emerald-500 bg-emerald-50/50' : 'border-transparent')
+                  }
+                  aria-label={`Select ${slot.label}`}
+                >
+                  <CardLogo value={slot.value} />
+                  <span className="text-xs text-slate-400">{slot.label}</span>
+                </button>
+                {slot.value && (
+                  <button
+                    type="button"
+                    onClick={() => clearCardBySlotId(slot.id)}
+                    className="text-xs text-slate-400 hover:text-red-600 transition"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
         </div>
 
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <label className="block text-sm font-medium text-slate-700 mb-1">Import from Ignition (optional)</label>
-          <p className="text-xs text-slate-500 mb-2">
-            Paste full hand history text, then parse to auto-fill this same form. Save still uses the single button below.
-          </p>
-          <textarea
-            value={importRawText}
-            onChange={(e) => setImportRawText(e.target.value)}
-            rows={5}
-            className={inputClass + ' resize-y font-mono'}
-            placeholder="Paste Ignition hand history here..."
-          />
-          <div className="mt-2 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => parseImportAndApply({ silent: false })}
-              className="px-3 py-2 rounded-lg bg-slate-200 text-slate-700 text-sm font-medium hover:bg-slate-300 transition"
-            >
-              Parse & preview import
-            </button>
-            {importPreview && (
-              <span className="text-xs text-slate-500">
-                {importPreview.actionCount} actions parsed
-              </span>
-            )}
-          </div>
-          {importPreview && (
-            <p className="text-xs text-slate-500 mt-1">
-              {importPreview.tableName ? `Table: ${importPreview.tableName}. ` : ''}
-              {importPreview.handId ? `Hand #${importPreview.handId}. ` : ''}
-              {importPreview.heroPosition ? `Hero: ${importPreview.heroPosition}. ` : ''}
-              {importPreview.reachedStreet ? `Reached: ${importPreview.reachedStreet}. ` : ''}
-              {typeof importPreview.winLoss === 'number' ? `Win/Loss: ${importPreview.winLoss >= 0 ? '+' : ''}${importPreview.winLoss.toFixed(2)}.` : ''}
-            </p>
-          )}
-          {importError && <p className="text-xs text-red-600 mt-1">{importError}</p>}
-        </div>
+        <HandDetailsForm
+          noFlop={noFlop}
+          setNoFlop={setNoFlop}
+          flop1={flop1}
+          flop2={flop2}
+          flop3={flop3}
+          turn={turn}
+          river={river}
+          registerCardPickerTarget={registerCardPickerTarget}
+          clearCardBySlotId={clearCardBySlotId}
+          activeCardTargetId={effectiveTargetId}
+        />
+
+        <CardPicker
+          targetId={effectiveTargetId}
+          selectedRank={cardPickerRank}
+          onSelectRank={setCardPickerRank}
+          onApplyCard={onApplyCard}
+        />
+        {cardPickerError && <p className="-mt-4 text-sm text-red-600">{cardPickerError}</p>}
 
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Table context</label>
@@ -1619,119 +1850,6 @@ export function UnifiedHandForm({
               Dollar result is derived automatically from net BB when Big blind size is provided.
             </p>
           </div>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-slate-600 mb-1">
-            Manual action text (optional parse helper)
-          </label>
-          <textarea
-            value={manualActionText}
-            onChange={(e) => setManualActionText(e.target.value)}
-            rows={3}
-            className={inputClass + ' resize-y'}
-            placeholder="Example: Preflop I raised to 3bb, c-bet flop 4bb, checked turn, folded river, lost 18bb."
-          />
-          <div className="mt-2 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleParseManualText}
-              className="px-3 py-2 rounded-lg bg-slate-200 text-slate-700 text-sm font-medium hover:bg-slate-300 transition"
-            >
-              Parse & preview text
-            </button>
-            {parsePreview && (
-              <span className="text-xs text-slate-500">
-                Confidence: {(parsePreview.overall * 100).toFixed(0)}%
-              </span>
-            )}
-          </div>
-          {parsePreview?.message && (
-            <p className="text-xs text-slate-500 mt-1">{parsePreview.message}</p>
-          )}
-          {parsePreview?.missingRequired?.length > 0 && (
-            <p className="text-xs text-amber-600 mt-1">
-              Missing from text: {parsePreview.missingRequired.join(', ')}
-            </p>
-          )}
-          {aiStatus === 'loading' && (
-            <p className="text-xs text-slate-500 mt-1">Asking AI to fill missing details...</p>
-          )}
-          {aiError && (
-            <p className="text-xs text-red-600 mt-1">{aiError}</p>
-          )}
-          {aiProposal && aiStatus !== 'loading' && (
-            <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
-              <p className="text-xs font-medium text-emerald-800">AI normalization complete</p>
-              <p className="text-xs text-emerald-700 mt-1">
-                Missing fields were auto-filled when possible. Resolve conflicts below before saving.
-              </p>
-              {aiProposal?.meta?.model && (
-                <p className="text-[11px] text-emerald-700 mt-1">
-                  Model: {aiProposal.meta.model}
-                  {aiProposal?.meta?.fallbackUsed ? ' (fallback mode)' : ''}
-                </p>
-              )}
-              {summarizeAiProposal(aiProposal).length > 0 && (
-                <ul className="mt-1 text-xs text-emerald-800 list-disc list-inside">
-                  {summarizeAiProposal(aiProposal).map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-          {aiConflicts.length > 0 && (
-            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-              <p className="text-xs font-medium text-amber-900">
-                Resolve AI conflicts ({unresolvedConflictCount(aiConflicts)} unresolved)
-              </p>
-              <div className="mt-2 space-y-2">
-                {aiConflicts.map((conflict) => (
-                  <div key={conflict.id} className="rounded-md border border-amber-200 bg-white px-2 py-2">
-                    <p className="text-xs font-medium text-slate-700">{conflict.label}</p>
-                    <p className="text-xs text-slate-600 mt-0.5">
-                      Current: {formatConflictValue(conflict.type, conflict.currentValue)}
-                    </p>
-                    <p className="text-xs text-slate-600">
-                      AI: {formatConflictValue(conflict.type, conflict.suggestedValue)}
-                    </p>
-                    <div className="mt-1 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleResolveAiConflict(conflict.id, 'keep')}
-                        className={
-                          'px-2 py-1 rounded text-xs font-medium transition ' +
-                          (conflict.resolution === 'keep'
-                            ? 'bg-slate-700 text-white'
-                            : 'bg-slate-200 text-slate-700 hover:bg-slate-300')
-                        }
-                      >
-                        Keep mine
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleResolveAiConflict(conflict.id, 'use_ai')}
-                        className={
-                          'px-2 py-1 rounded text-xs font-medium transition ' +
-                          (conflict.resolution === 'use_ai'
-                            ? 'bg-emerald-600 text-white'
-                            : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200')
-                        }
-                      >
-                        Use AI value
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {aiStatus === 'applied' && aiConflicts.length === 0 && (
-            <p className="text-xs text-emerald-700 mt-1">
-              AI suggestions were applied to missing fields. You can still edit fields before saving.
-            </p>
-          )}
         </div>
 
         <div>
