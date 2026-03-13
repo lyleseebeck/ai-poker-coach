@@ -6,6 +6,13 @@ import { buildHandRecordV2, createEmptyHandDraft, validateHandDraft } from '../l
 import { parseManualActionText } from '../lib/manualActionParser.js';
 import { parseIgnitionHandHistory } from '../lib/ignitionParser.js';
 import { normalizeHandFromText } from '../lib/aiNormalizeClient.js';
+import {
+  applyConflictResolution,
+  applyParsedFieldsToSnapshot,
+  buildNormalizeSnapshot,
+  formatConflictValue,
+  unresolvedConflictCount,
+} from '../lib/normalizeMerge.js';
 import { CardLogo } from './CardLogo.jsx';
 
 const ACTION_OPTIONS = [
@@ -252,6 +259,12 @@ function summarizeAiProposal(proposal) {
   const fields = proposal?.parsedFields || {};
   const summary = [];
 
+  if (Array.isArray(fields?.hero?.cards) && fields.hero.cards.length === 2) {
+    summary.push(`Hero cards: ${fields.hero.cards.join(' ')}`);
+  } else if (fields?.hero?.handCode) {
+    summary.push(`Hero hand: ${fields.hero.handCode}`);
+  }
+
   const position = fields?.hero?.position;
   if (position) summary.push(`Hero position: ${position}`);
 
@@ -410,7 +423,7 @@ export function UnifiedHandForm({
   const [aiError, setAiError] = useState('');
   const [aiProposal, setAiProposal] = useState(null);
   const [aiProposalSignature, setAiProposalSignature] = useState('');
-  const [aiConfirmedSignature, setAiConfirmedSignature] = useState('');
+  const [aiConflicts, setAiConflicts] = useState([]);
 
   const positions = POSITIONS_BY_PLAYERS[numPlayers] || [];
   const boardCards = useMemo(() => {
@@ -429,7 +442,7 @@ export function UnifiedHandForm({
       setAiError('');
       setAiProposal(null);
       setAiProposalSignature('');
-      setAiConfirmedSignature('');
+      setAiConflicts([]);
       return;
     }
     if (aiProposalSignature && aiProposalSignature !== signature) {
@@ -437,7 +450,7 @@ export function UnifiedHandForm({
       setAiError('');
       setAiProposal(null);
       setAiProposalSignature('');
-      setAiConfirmedSignature('');
+      setAiConflicts([]);
     }
   }, [manualActionText, aiProposalSignature]);
 
@@ -474,6 +487,47 @@ export function UnifiedHandForm({
     netBb,
     netChips,
   });
+
+  const hasDidReachFlopSignal = (state = getCurrentState()) =>
+    noFlop ||
+    boardCards.length > 0 ||
+    state.flopAction !== 'none' ||
+    state.turnAction !== 'none' ||
+    state.riverAction !== 'none';
+
+  const buildSnapshot = (overrides = {}) =>
+    buildNormalizeSnapshot({
+      heroCard1,
+      heroCard2,
+      heroPosition,
+      didReachFlop: !noFlop,
+      didReachFlopFilled: hasDidReachFlopSignal(),
+      ...getCurrentState(),
+      ...overrides,
+    });
+
+  const applySnapshotToForm = (snapshot) => {
+    setHeroCard1(snapshot.heroCard1 || '');
+    setHeroCard2(snapshot.heroCard2 || '');
+    setHeroPosition(snapshot.heroPosition || '');
+    setNoFlop(!snapshot.didReachFlop);
+    setFromMergedState({
+      preflopAction: snapshot.preflopAction || 'none',
+      preflopAmountBb: snapshot.preflopAmountBb || '',
+      preflopAmountChips: snapshot.preflopAmountChips || '',
+      flopAction: snapshot.flopAction || 'none',
+      flopAmountBb: snapshot.flopAmountBb || '',
+      flopAmountChips: snapshot.flopAmountChips || '',
+      turnAction: snapshot.turnAction || 'none',
+      turnAmountBb: snapshot.turnAmountBb || '',
+      turnAmountChips: snapshot.turnAmountChips || '',
+      riverAction: snapshot.riverAction || 'none',
+      riverAmountBb: snapshot.riverAmountBb || '',
+      riverAmountChips: snapshot.riverAmountChips || '',
+      netBb: snapshot.netBb || '',
+      netChips: snapshot.netChips || '',
+    });
+  };
 
   const runManualParser = (fillOnlyMissing) => {
     const text = manualActionText.trim();
@@ -513,29 +567,21 @@ export function UnifiedHandForm({
     return { parsed, merged, inferredHeroPosition };
   };
 
-  const applyParsedFieldsToForm = (parsedFields, fillOnlyMissing = true) => {
-    if (!parsedFields) return;
-    const parsedLike = { parsedFields };
-    const merged = mergeParsedIntoState(getCurrentState(), parsedLike, fillOnlyMissing);
-    setFromMergedState(merged);
-
-    const inferredHeroPosition = String(parsedFields?.hero?.position || '').trim().toUpperCase();
-    if (inferredHeroPosition) {
-      if (!fillOnlyMissing || !heroPosition) {
-        setHeroPosition(inferredHeroPosition);
-      }
-    }
-
-    if (typeof parsedFields?.board?.didReachFlop === 'boolean') {
-      setNoFlop(!parsedFields.board.didReachFlop);
-    }
+  const applyParsedFieldsToForm = (parsedFields, fillOnlyMissing = true, baseSnapshot = null) => {
+    if (!parsedFields) return { conflicts: [] };
+    const activeSnapshot = baseSnapshot || buildSnapshot();
+    const { nextSnapshot, conflicts } = applyParsedFieldsToSnapshot(activeSnapshot, parsedFields, {
+      fillOnlyMissing,
+    });
+    applySnapshotToForm(nextSnapshot);
+    return { conflicts, nextSnapshot };
   };
 
   const requestAiProposal = async (manualParseResult) => {
     const signature = manualTextSignature(manualActionText);
     if (!signature) return null;
 
-    if (aiProposal && aiProposalSignature === signature && aiStatus === 'proposed') {
+    if (aiProposal && aiProposalSignature === signature && aiStatus !== 'error') {
       return aiProposal;
     }
 
@@ -549,6 +595,7 @@ export function UnifiedHandForm({
           numPlayers: numberOrNull(numPlayers),
           boardCards,
           didReachFlop: !noFlop,
+          heroCards: [heroCard1, heroCard2],
           stakes: {
             sb: numberOrNull(sbSize),
             bb: numberOrNull(bbSize),
@@ -561,31 +608,52 @@ export function UnifiedHandForm({
       const proposal = await normalizeHandFromText(payload);
       setAiProposal(proposal);
       setAiProposalSignature(signature);
-      setAiStatus('proposed');
+      setAiStatus('idle');
       setAiError('');
       return proposal;
     } catch (error) {
       setAiStatus('error');
       setAiProposal(null);
       setAiProposalSignature(signature);
+      setAiConflicts([]);
       setAiError(error?.message || 'AI assistant failed to return suggestions.');
       return null;
     }
   };
 
-  const handleApplyAiProposal = () => {
-    if (!aiProposal) return;
-    applyParsedFieldsToForm(aiProposal.parsedFields, true);
-    setAiConfirmedSignature(aiProposalSignature || manualTextSignature(manualActionText));
-    setAiStatus('confirmed');
+  const applyAiProposalWithConflicts = (proposal, options = {}) => {
+    if (!proposal?.parsedFields) return { conflicts: [] };
+    const { conflicts } = applyParsedFieldsToForm(
+      proposal.parsedFields,
+      true,
+      options.baseSnapshot || null
+    );
+    setAiConflicts(conflicts);
+    setAiStatus(unresolvedConflictCount(conflicts) > 0 ? 'conflicts' : 'applied');
     setAiError('');
+    return { conflicts };
   };
 
-  const handleDismissAiProposal = () => {
-    setAiStatus('idle');
-    setAiProposal(null);
-    setAiError('');
-    setAiConfirmedSignature('');
+  const handleResolveAiConflict = (conflictId, resolution) => {
+    const selectedConflict = aiConflicts.find((item) => item.id === conflictId);
+    if (!selectedConflict) return;
+
+    if (resolution === 'use_ai') {
+      const snapshot = buildSnapshot();
+      const nextSnapshot = applyConflictResolution(snapshot, selectedConflict, resolution);
+      applySnapshotToForm(nextSnapshot);
+    }
+
+    setAiConflicts((prev) => {
+      const next = prev.map((item) =>
+        item.id === conflictId
+          ? { ...item, resolution: resolution === 'keep' || resolution === 'use_ai' ? resolution : null }
+          : item
+      );
+      const unresolved = unresolvedConflictCount(next);
+      setAiStatus(unresolved > 0 ? 'conflicts' : 'applied');
+      return next;
+    });
   };
 
   const handlePlayersChange = (value) => {
@@ -601,7 +669,27 @@ export function UnifiedHandForm({
     if (!parseResult?.parsed) return;
 
     if (shouldRequestAiFallback(parseResult.parsed)) {
-      await requestAiProposal(parseResult.parsed);
+      const proposal = await requestAiProposal(parseResult.parsed);
+      if (!proposal) return;
+
+      const baseSnapshot = buildSnapshot({
+        ...(parseResult.merged || {}),
+        heroPosition: parseResult.inferredHeroPosition || heroPosition,
+      });
+      const { conflicts } = applyAiProposalWithConflicts(proposal, { baseSnapshot });
+      const unresolved = unresolvedConflictCount(conflicts);
+
+      setParsePreview({
+        overall:
+          proposal.overallConfidence ??
+          parseResult.parsed.confidence?.overall ??
+          0,
+        missingRequired: proposal.missingRequired || [],
+        message:
+          unresolved > 0
+            ? `AI auto-filled missing fields and found ${unresolved} conflicting field${unresolved === 1 ? '' : 's'} that require confirmation below.`
+            : 'AI auto-filled missing fields. Review and edit any field before saving.',
+      });
       return;
     }
 
@@ -609,7 +697,7 @@ export function UnifiedHandForm({
     setAiError('');
     setAiProposal(null);
     setAiProposalSignature('');
-    setAiConfirmedSignature('');
+    setAiConflicts([]);
   };
 
   const parseImportAndApply = ({ silent = false } = {}) => {
@@ -739,6 +827,11 @@ export function UnifiedHandForm({
         reachedStreet,
         expectedBoardCards,
       });
+      setAiStatus('idle');
+      setAiError('');
+      setAiProposal(null);
+      setAiProposalSignature('');
+      setAiConflicts([]);
       return nextImport;
     } catch (error) {
       if (!silent) setImportError('Parse error: ' + (error.message || String(error)));
@@ -750,6 +843,14 @@ export function UnifiedHandForm({
     e.preventDefault();
     setFormErrors({});
     setImportError('');
+
+    const unresolvedCount = unresolvedConflictCount(aiConflicts);
+    if (unresolvedCount > 0) {
+      setFormErrors({
+        aiConflicts: `Resolve ${unresolvedCount} AI conflict${unresolvedCount === 1 ? '' : 's'} before saving.`,
+      });
+      return;
+    }
 
     const rawImport = importRawText.trim();
     let activeImport = null;
@@ -891,16 +992,34 @@ export function UnifiedHandForm({
       Boolean(currentManualSignature) &&
       Boolean(manualParseResult?.parsed) &&
       shouldRequestAiFallback(manualParseResult.parsed);
-    const aiAlreadyConfirmed =
-      Boolean(currentManualSignature) &&
-      currentManualSignature === aiConfirmedSignature;
 
-    if (!validation.isValid && shouldTryAiFallback && !aiAlreadyConfirmed) {
+    if (!validation.isValid && shouldTryAiFallback) {
       const proposal = await requestAiProposal(manualParseResult.parsed);
+      let unresolved = 0;
+      if (proposal) {
+        const baseSnapshot = buildSnapshot({
+          ...mergedState,
+          heroPosition: effectiveHeroPosition,
+          didReachFlop: effectiveDidReachFlop,
+          didReachFlopFilled: true,
+        });
+        const { conflicts } = applyAiProposalWithConflicts(proposal, { baseSnapshot });
+        unresolved = unresolvedConflictCount(conflicts);
+        setParsePreview({
+          overall: proposal.overallConfidence ?? parsePreview?.overall ?? 0,
+          missingRequired: proposal.missingRequired || [],
+          message:
+            unresolved > 0
+              ? `AI found ${unresolved} conflict${unresolved === 1 ? '' : 's'}. Resolve them below before saving.`
+              : 'AI auto-filled missing fields. Review and save again.',
+        });
+      }
       setFormErrors({
         ...validation.errors,
         aiReview: proposal
-          ? 'AI suggestions are ready. Review and apply them, or continue filling fields manually.'
+          ? unresolved > 0
+            ? 'AI conflicts were detected. Resolve them before saving.'
+            : 'AI suggestions were auto-applied to missing fields. Review and save again.'
           : 'AI suggestions could not be loaded. Fill required fields manually and try saving again.',
       });
       return;
@@ -949,7 +1068,7 @@ export function UnifiedHandForm({
       setAiError('');
       setAiProposal(null);
       setAiProposalSignature('');
-      setAiConfirmedSignature('');
+      setAiConflicts([]);
     } catch (error) {
       setFormErrors(error?.validation?.errors || { form: error.message || 'Unable to save hand.' });
     }
@@ -1184,39 +1303,77 @@ export function UnifiedHandForm({
           {aiError && (
             <p className="text-xs text-red-600 mt-1">{aiError}</p>
           )}
-          {aiStatus === 'proposed' && aiProposal && (
-            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-              <p className="text-xs font-medium text-amber-800">AI suggestions ready</p>
-              <p className="text-xs text-amber-700 mt-1">
-                Review and apply before save if you want these inferred values.
+          {aiProposal && aiStatus !== 'loading' && (
+            <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+              <p className="text-xs font-medium text-emerald-800">AI normalization complete</p>
+              <p className="text-xs text-emerald-700 mt-1">
+                Missing fields were auto-filled when possible. Resolve conflicts below before saving.
               </p>
+              {aiProposal?.meta?.model && (
+                <p className="text-[11px] text-emerald-700 mt-1">
+                  Model: {aiProposal.meta.model}
+                  {aiProposal?.meta?.fallbackUsed ? ' (fallback mode)' : ''}
+                </p>
+              )}
               {summarizeAiProposal(aiProposal).length > 0 && (
-                <ul className="mt-1 text-xs text-amber-800 list-disc list-inside">
+                <ul className="mt-1 text-xs text-emerald-800 list-disc list-inside">
                   {summarizeAiProposal(aiProposal).map((line) => (
                     <li key={line}>{line}</li>
                   ))}
                 </ul>
               )}
-              <div className="mt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleApplyAiProposal}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition"
-                >
-                  Apply AI suggestions
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDismissAiProposal}
-                  className="px-3 py-1.5 rounded-lg bg-slate-200 text-slate-700 text-xs font-medium hover:bg-slate-300 transition"
-                >
-                  Dismiss
-                </button>
+            </div>
+          )}
+          {aiConflicts.length > 0 && (
+            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+              <p className="text-xs font-medium text-amber-900">
+                Resolve AI conflicts ({unresolvedConflictCount(aiConflicts)} unresolved)
+              </p>
+              <div className="mt-2 space-y-2">
+                {aiConflicts.map((conflict) => (
+                  <div key={conflict.id} className="rounded-md border border-amber-200 bg-white px-2 py-2">
+                    <p className="text-xs font-medium text-slate-700">{conflict.label}</p>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      Current: {formatConflictValue(conflict.type, conflict.currentValue)}
+                    </p>
+                    <p className="text-xs text-slate-600">
+                      AI: {formatConflictValue(conflict.type, conflict.suggestedValue)}
+                    </p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleResolveAiConflict(conflict.id, 'keep')}
+                        className={
+                          'px-2 py-1 rounded text-xs font-medium transition ' +
+                          (conflict.resolution === 'keep'
+                            ? 'bg-slate-700 text-white'
+                            : 'bg-slate-200 text-slate-700 hover:bg-slate-300')
+                        }
+                      >
+                        Keep mine
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleResolveAiConflict(conflict.id, 'use_ai')}
+                        className={
+                          'px-2 py-1 rounded text-xs font-medium transition ' +
+                          (conflict.resolution === 'use_ai'
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200')
+                        }
+                      >
+                        Use AI value
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
-          {aiStatus === 'confirmed' && (
-            <p className="text-xs text-emerald-700 mt-1">AI suggestions applied. You can still edit fields before saving.</p>
+          {aiStatus === 'applied' && aiConflicts.length === 0 && (
+            <p className="text-xs text-emerald-700 mt-1">
+              AI suggestions were applied to missing fields. You can still edit fields before saving.
+            </p>
           )}
         </div>
 

@@ -81,7 +81,7 @@ Free-only enforcement:
 ## API contracts
 
 ### `POST /api/hand-normalize`
-Existing local deterministic/manual-action normalization endpoint.
+LLM-backed manual-action normalization endpoint with deterministic fallback.
 
 ### `POST /api/coach-hand`
 Request:
@@ -225,8 +225,14 @@ server/
     providers/
       index.js
       openRouterProvider.js
+  normalize/
+    normalizeService.js
+    normalizePrompt.js
+    normalizeSchema.js
+    http.js
 api/
   coach-hand.js
+  hand-normalize.js
 tests/
   *.test.js
 ```
