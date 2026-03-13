@@ -97,9 +97,10 @@ function sanitizeDecision(raw, label) {
   const hasAction = raw.action != null && raw.action !== '';
   const hasAmountBb = raw.amountBb != null && raw.amountBb !== '';
   const hasFacingAmountBb = raw.facingAmountBb != null && raw.facingAmountBb !== '';
+  const hasStreetNetBb = raw.streetNetBb != null && raw.streetNetBb !== '';
   const hasAmountChips = raw.amountChips != null && raw.amountChips !== '';
 
-  if (!hasAction && !hasAmountBb && !hasFacingAmountBb && !hasAmountChips) return null;
+  if (!hasAction && !hasAmountBb && !hasFacingAmountBb && !hasStreetNetBb && !hasAmountChips) return null;
 
   const out = {};
 
@@ -125,6 +126,14 @@ function sanitizeDecision(raw, label) {
       throw toError(`${label}.facingAmountBb must be numeric.`, 502, 'NORMALIZE_MODEL_INVALID');
     }
     out.facingAmountBb = facingAmountBb;
+  }
+
+  if (hasStreetNetBb) {
+    const streetNetBb = toFiniteNumber(raw.streetNetBb);
+    if (streetNetBb == null) {
+      throw toError(`${label}.streetNetBb must be numeric.`, 502, 'NORMALIZE_MODEL_INVALID');
+    }
+    out.streetNetBb = streetNetBb;
   }
 
   if (hasAmountChips) {

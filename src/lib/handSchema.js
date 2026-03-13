@@ -21,6 +21,7 @@ function defaultStreetDecision(source = 'manual') {
   return {
     action: 'none',
     amountBb: null,
+    streetNetBb: null,
     amountChips: null,
     facingAmountBb: null,
     source,
@@ -32,6 +33,7 @@ function sanitizeStreetDecision(decision, defaultSource = 'manual') {
   return {
     action: isValidAction(rawAction) ? rawAction : 'none',
     amountBb: toNumberOrNull(decision?.amountBb),
+    streetNetBb: toNumberOrNull(decision?.streetNetBb),
     amountChips: toNumberOrNull(decision?.amountChips),
     facingAmountBb: toNumberOrNull(decision?.facingAmountBb),
     source: decision?.source || defaultSource,

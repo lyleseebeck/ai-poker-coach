@@ -29,7 +29,7 @@ const AI_FALLBACK_CONFIDENCE_THRESHOLD = 0.75;
 const DEFAULT_PRE_FLOP_OPEN_BB = 2.5;
 const DEFAULT_PRE_FLOP_3BET_BB = 8;
 const STREET_DECISION_GRID_CLASS =
-  'grid gap-2 items-center md:grid-cols-[170px,minmax(11rem,1fr),minmax(10rem,1fr),minmax(10rem,1fr),minmax(10rem,1fr)]';
+  'grid gap-2 items-center md:grid-cols-[170px,minmax(8rem,0.8fr),minmax(10rem,1fr),minmax(10rem,1fr)]';
 
 function numberOrNull(value) {
   if (value == null || value === '') return null;
@@ -60,7 +60,11 @@ function getLastHeroAction(summary) {
 
 function estimateStreetContributionBb(street, decision, runningPotBb, heroPosition, assumptions) {
   const action = String(decision?.action || 'none').toLowerCase();
-  if (action === 'none' || action === 'check' || action === 'fold') return 0;
+  if (action === 'none' || action === 'check') return 0;
+  if (action === 'fold') {
+    const streetNet = numberOrNull(decision?.streetNetBb);
+    return streetNet != null && streetNet < 0 ? Math.abs(streetNet) : 0;
+  }
 
   const explicitAmount = numberOrNull(decision?.amountBb);
   if (explicitAmount != null && explicitAmount >= 0) return explicitAmount;
@@ -419,12 +423,14 @@ function summarizeAiProposal(proposal) {
     const decision = streetSummary?.[street] || {};
     const action = decision?.action;
     if (action && action !== 'none') {
-      const amountBb = numberOrNull(decision.amountBb);
-      const facingAmountBb = numberOrNull(decision.facingAmountBb);
-      if (action === 'fold' && facingAmountBb != null) {
-        summary.push(`${street}: ${action} (facing ${facingAmountBb}bb)`);
-      } else if (amountBb != null) {
-        summary.push(`${street}: ${action} ${amountBb}bb`);
+      const streetBetBb = numberOrNull(decision.amountBb) ?? numberOrNull(decision.facingAmountBb);
+      const streetNetBb = numberOrNull(decision.streetNetBb);
+      if (streetBetBb != null && streetNetBb != null) {
+        summary.push(`${street}: ${action} ${streetBetBb}bb (street result ${streetNetBb}bb)`);
+      } else if (streetBetBb != null) {
+        summary.push(`${street}: ${action} ${streetBetBb}bb`);
+      } else if (streetNetBb != null) {
+        summary.push(`${street}: ${action} (street result ${streetNetBb}bb)`);
       } else {
         summary.push(`${street}: ${action}`);
       }
@@ -456,6 +462,7 @@ function mergeParsedIntoState(current, parsed, fillOnlyMissing) {
 
     const actionKey = `${street}Action`;
     const bbKey = `${street}AmountBb`;
+    const streetNetKey = `${street}StreetNetBb`;
     const facingKey = `${street}FacingAmountBb`;
     const chipsKey = `${street}AmountChips`;
     const shouldSetAction = !fillOnlyMissing || next[actionKey] === 'none';
@@ -468,6 +475,10 @@ function mergeParsedIntoState(current, parsed, fillOnlyMissing) {
     if (parsedDecision.facingAmountBb != null) {
       const shouldSetFacingBb = !fillOnlyMissing || next[facingKey] === '';
       if (shouldSetFacingBb) next[facingKey] = String(parsedDecision.facingAmountBb);
+    }
+    if (parsedDecision.streetNetBb != null) {
+      const shouldSetStreetNetBb = !fillOnlyMissing || next[streetNetKey] === '';
+      if (shouldSetStreetNetBb) next[streetNetKey] = String(parsedDecision.streetNetBb);
     }
     if (parsedDecision.amountChips != null) {
       const shouldSetAmountChips = !fillOnlyMissing || next[chipsKey] === '';
@@ -491,13 +502,11 @@ function StreetDecisionRow({
   street,
   label,
   action,
-  amountBb,
-  facingAmountBb,
-  amountChips,
+  streetBetBb,
+  streetResultBb,
   setAction,
-  setAmountBb,
-  setFacingAmountBb,
-  setAmountChips,
+  setStreetBetBb,
+  setStreetResultBb,
 }) {
   const inputClass =
     'w-full min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white';
@@ -519,26 +528,18 @@ function StreetDecisionRow({
       <input
         type="number"
         step="0.1"
-        value={amountBb}
-        onChange={(e) => setAmountBb(e.target.value)}
+        value={streetBetBb}
+        onChange={(e) => setStreetBetBb(e.target.value)}
         className={inputClass}
-        placeholder="Hero invested (BB)"
+        placeholder="Street bet size (BB)"
       />
       <input
         type="number"
         step="0.1"
-        value={facingAmountBb}
-        onChange={(e) => setFacingAmountBb(e.target.value)}
+        value={streetResultBb}
+        onChange={(e) => setStreetResultBb(e.target.value)}
         className={inputClass}
-        placeholder="Facing bet (BB)"
-      />
-      <input
-        type="number"
-        step="0.01"
-        value={amountChips}
-        onChange={(e) => setAmountChips(e.target.value)}
-        className={inputClass}
-        placeholder="Hero invested ($)"
+        placeholder="Street result (BB, optional)"
       />
     </div>
   );
@@ -573,18 +574,22 @@ export function UnifiedHandForm({
 
   const [preflopAction, setPreflopAction] = useState('none');
   const [preflopAmountBb, setPreflopAmountBb] = useState('');
+  const [preflopStreetNetBb, setPreflopStreetNetBb] = useState('');
   const [preflopFacingAmountBb, setPreflopFacingAmountBb] = useState('');
   const [preflopAmountChips, setPreflopAmountChips] = useState('');
   const [flopAction, setFlopAction] = useState('none');
   const [flopAmountBb, setFlopAmountBb] = useState('');
+  const [flopStreetNetBb, setFlopStreetNetBb] = useState('');
   const [flopFacingAmountBb, setFlopFacingAmountBb] = useState('');
   const [flopAmountChips, setFlopAmountChips] = useState('');
   const [turnAction, setTurnAction] = useState('none');
   const [turnAmountBb, setTurnAmountBb] = useState('');
+  const [turnStreetNetBb, setTurnStreetNetBb] = useState('');
   const [turnFacingAmountBb, setTurnFacingAmountBb] = useState('');
   const [turnAmountChips, setTurnAmountChips] = useState('');
   const [riverAction, setRiverAction] = useState('none');
   const [riverAmountBb, setRiverAmountBb] = useState('');
+  const [riverStreetNetBb, setRiverStreetNetBb] = useState('');
   const [riverFacingAmountBb, setRiverFacingAmountBb] = useState('');
   const [riverAmountChips, setRiverAmountChips] = useState('');
 
@@ -638,18 +643,22 @@ export function UnifiedHandForm({
   const setFromMergedState = (next) => {
     setPreflopAction(next.preflopAction);
     setPreflopAmountBb(next.preflopAmountBb);
+    setPreflopStreetNetBb(next.preflopStreetNetBb);
     setPreflopFacingAmountBb(next.preflopFacingAmountBb);
     setPreflopAmountChips(next.preflopAmountChips);
     setFlopAction(next.flopAction);
     setFlopAmountBb(next.flopAmountBb);
+    setFlopStreetNetBb(next.flopStreetNetBb);
     setFlopFacingAmountBb(next.flopFacingAmountBb);
     setFlopAmountChips(next.flopAmountChips);
     setTurnAction(next.turnAction);
     setTurnAmountBb(next.turnAmountBb);
+    setTurnStreetNetBb(next.turnStreetNetBb);
     setTurnFacingAmountBb(next.turnFacingAmountBb);
     setTurnAmountChips(next.turnAmountChips);
     setRiverAction(next.riverAction);
     setRiverAmountBb(next.riverAmountBb);
+    setRiverStreetNetBb(next.riverStreetNetBb);
     setRiverFacingAmountBb(next.riverFacingAmountBb);
     setRiverAmountChips(next.riverAmountChips);
     setNetBb(next.netBb);
@@ -659,18 +668,22 @@ export function UnifiedHandForm({
   const getCurrentState = () => ({
     preflopAction,
     preflopAmountBb,
+    preflopStreetNetBb,
     preflopFacingAmountBb,
     preflopAmountChips,
     flopAction,
     flopAmountBb,
+    flopStreetNetBb,
     flopFacingAmountBb,
     flopAmountChips,
     turnAction,
     turnAmountBb,
+    turnStreetNetBb,
     turnFacingAmountBb,
     turnAmountChips,
     riverAction,
     riverAmountBb,
+    riverStreetNetBb,
     riverFacingAmountBb,
     riverAmountChips,
     netBb,
@@ -713,18 +726,22 @@ export function UnifiedHandForm({
     setFromMergedState({
       preflopAction: snapshot.preflopAction || 'none',
       preflopAmountBb: snapshot.preflopAmountBb || '',
+      preflopStreetNetBb: snapshot.preflopStreetNetBb || '',
       preflopFacingAmountBb: snapshot.preflopFacingAmountBb || '',
       preflopAmountChips: snapshot.preflopAmountChips || '',
       flopAction: snapshot.flopAction || 'none',
       flopAmountBb: snapshot.flopAmountBb || '',
+      flopStreetNetBb: snapshot.flopStreetNetBb || '',
       flopFacingAmountBb: snapshot.flopFacingAmountBb || '',
       flopAmountChips: snapshot.flopAmountChips || '',
       turnAction: snapshot.turnAction || 'none',
       turnAmountBb: snapshot.turnAmountBb || '',
+      turnStreetNetBb: snapshot.turnStreetNetBb || '',
       turnFacingAmountBb: snapshot.turnFacingAmountBb || '',
       turnAmountChips: snapshot.turnAmountChips || '',
       riverAction: snapshot.riverAction || 'none',
       riverAmountBb: snapshot.riverAmountBb || '',
+      riverStreetNetBb: snapshot.riverStreetNetBb || '',
       riverFacingAmountBb: snapshot.riverFacingAmountBb || '',
       riverAmountChips: snapshot.riverAmountChips || '',
       netBb: snapshot.netBb || '',
@@ -756,18 +773,22 @@ export function UnifiedHandForm({
     const merged = {
       preflopAction: nextSnapshot.preflopAction,
       preflopAmountBb: nextSnapshot.preflopAmountBb,
+      preflopStreetNetBb: nextSnapshot.preflopStreetNetBb,
       preflopFacingAmountBb: nextSnapshot.preflopFacingAmountBb,
       preflopAmountChips: nextSnapshot.preflopAmountChips,
       flopAction: nextSnapshot.flopAction,
       flopAmountBb: nextSnapshot.flopAmountBb,
+      flopStreetNetBb: nextSnapshot.flopStreetNetBb,
       flopFacingAmountBb: nextSnapshot.flopFacingAmountBb,
       flopAmountChips: nextSnapshot.flopAmountChips,
       turnAction: nextSnapshot.turnAction,
       turnAmountBb: nextSnapshot.turnAmountBb,
+      turnStreetNetBb: nextSnapshot.turnStreetNetBb,
       turnFacingAmountBb: nextSnapshot.turnFacingAmountBb,
       turnAmountChips: nextSnapshot.turnAmountChips,
       riverAction: nextSnapshot.riverAction,
       riverAmountBb: nextSnapshot.riverAmountBb,
+      riverStreetNetBb: nextSnapshot.riverStreetNetBb,
       riverFacingAmountBb: nextSnapshot.riverFacingAmountBb,
       riverAmountChips: nextSnapshot.riverAmountChips,
       netBb: nextSnapshot.netBb,
@@ -966,18 +987,22 @@ export function UnifiedHandForm({
 
       setPreflopAction(importSummary.preflop.action);
       setPreflopAmountBb(importSummary.preflop.amountBb != null ? String(importSummary.preflop.amountBb) : '');
+      setPreflopStreetNetBb('');
       setPreflopFacingAmountBb(importSummary.preflop.facingAmountBb != null ? String(importSummary.preflop.facingAmountBb) : '');
       setPreflopAmountChips(importSummary.preflop.amountChips != null ? String(importSummary.preflop.amountChips) : '');
       setFlopAction(importSummary.flop.action);
       setFlopAmountBb(importSummary.flop.amountBb != null ? String(importSummary.flop.amountBb) : '');
+      setFlopStreetNetBb('');
       setFlopFacingAmountBb(importSummary.flop.facingAmountBb != null ? String(importSummary.flop.facingAmountBb) : '');
       setFlopAmountChips(importSummary.flop.amountChips != null ? String(importSummary.flop.amountChips) : '');
       setTurnAction(importSummary.turn.action);
       setTurnAmountBb(importSummary.turn.amountBb != null ? String(importSummary.turn.amountBb) : '');
+      setTurnStreetNetBb('');
       setTurnFacingAmountBb(importSummary.turn.facingAmountBb != null ? String(importSummary.turn.facingAmountBb) : '');
       setTurnAmountChips(importSummary.turn.amountChips != null ? String(importSummary.turn.amountChips) : '');
       setRiverAction(importSummary.river.action);
       setRiverAmountBb(importSummary.river.amountBb != null ? String(importSummary.river.amountBb) : '');
+      setRiverStreetNetBb('');
       setRiverFacingAmountBb(importSummary.river.facingAmountBb != null ? String(importSummary.river.facingAmountBb) : '');
       setRiverAmountChips(importSummary.river.amountChips != null ? String(importSummary.river.amountChips) : '');
 
@@ -1022,18 +1047,22 @@ export function UnifiedHandForm({
         prefill: {
           preflopAction: importSummary.preflop.action,
           preflopAmountBb: importSummary.preflop.amountBb != null ? String(importSummary.preflop.amountBb) : '',
+          preflopStreetNetBb: '',
           preflopFacingAmountBb: importSummary.preflop.facingAmountBb != null ? String(importSummary.preflop.facingAmountBb) : '',
           preflopAmountChips: importSummary.preflop.amountChips != null ? String(importSummary.preflop.amountChips) : '',
           flopAction: importSummary.flop.action,
           flopAmountBb: importSummary.flop.amountBb != null ? String(importSummary.flop.amountBb) : '',
+          flopStreetNetBb: '',
           flopFacingAmountBb: importSummary.flop.facingAmountBb != null ? String(importSummary.flop.facingAmountBb) : '',
           flopAmountChips: importSummary.flop.amountChips != null ? String(importSummary.flop.amountChips) : '',
           turnAction: importSummary.turn.action,
           turnAmountBb: importSummary.turn.amountBb != null ? String(importSummary.turn.amountBb) : '',
+          turnStreetNetBb: '',
           turnFacingAmountBb: importSummary.turn.facingAmountBb != null ? String(importSummary.turn.facingAmountBb) : '',
           turnAmountChips: importSummary.turn.amountChips != null ? String(importSummary.turn.amountChips) : '',
           riverAction: importSummary.river.action,
           riverAmountBb: importSummary.river.amountBb != null ? String(importSummary.river.amountBb) : '',
+          riverStreetNetBb: '',
           riverFacingAmountBb: importSummary.river.facingAmountBb != null ? String(importSummary.river.facingAmountBb) : '',
           riverAmountChips: importSummary.river.amountChips != null ? String(importSummary.river.amountChips) : '',
           netBb: netBbValue != null ? String(netBbValue) : '',
@@ -1176,36 +1205,43 @@ export function UnifiedHandForm({
     draft.table.stackDepthBb.villain = numberOrNull(villainStackDepthBb);
     draft.board.didReachFlop = effectiveDidReachFlop;
     draft.board.cards = effectiveBoardCards;
+    const resolveStreetBetBb = (street) =>
+      numberOrNull(mergedState[`${street}AmountBb`]) ??
+      numberOrNull(mergedState[`${street}FacingAmountBb`]);
     draft.heroStreetSummary.preflop = {
       action: mergedState.preflopAction,
-      amountBb: numberOrNull(mergedState.preflopAmountBb),
-      facingAmountBb: numberOrNull(mergedState.preflopFacingAmountBb),
-      amountChips: numberOrNull(mergedState.preflopAmountChips),
+      amountBb: resolveStreetBetBb('preflop'),
+      streetNetBb: numberOrNull(mergedState.preflopStreetNetBb),
+      facingAmountBb: resolveStreetBetBb('preflop'),
+      amountChips: null,
       source: activeImport ? 'imported' : 'manual',
     };
     draft.heroStreetSummary.flop = {
       action: mergedState.flopAction,
-      amountBb: numberOrNull(mergedState.flopAmountBb),
-      facingAmountBb: numberOrNull(mergedState.flopFacingAmountBb),
-      amountChips: numberOrNull(mergedState.flopAmountChips),
+      amountBb: resolveStreetBetBb('flop'),
+      streetNetBb: numberOrNull(mergedState.flopStreetNetBb),
+      facingAmountBb: resolveStreetBetBb('flop'),
+      amountChips: null,
       source: activeImport ? 'imported' : 'manual',
     };
     draft.heroStreetSummary.turn = {
       action: mergedState.turnAction,
-      amountBb: numberOrNull(mergedState.turnAmountBb),
-      facingAmountBb: numberOrNull(mergedState.turnFacingAmountBb),
-      amountChips: numberOrNull(mergedState.turnAmountChips),
+      amountBb: resolveStreetBetBb('turn'),
+      streetNetBb: numberOrNull(mergedState.turnStreetNetBb),
+      facingAmountBb: resolveStreetBetBb('turn'),
+      amountChips: null,
       source: activeImport ? 'imported' : 'manual',
     };
     draft.heroStreetSummary.river = {
       action: mergedState.riverAction,
-      amountBb: numberOrNull(mergedState.riverAmountBb),
-      facingAmountBb: numberOrNull(mergedState.riverFacingAmountBb),
-      amountChips: numberOrNull(mergedState.riverAmountChips),
+      amountBb: resolveStreetBetBb('river'),
+      streetNetBb: numberOrNull(mergedState.riverStreetNetBb),
+      facingAmountBb: resolveStreetBetBb('river'),
+      amountChips: null,
       source: activeImport ? 'imported' : 'manual',
     };
     draft.result.netBb = numberOrNull(mergedState.netBb);
-    draft.result.netChips = numberOrNull(mergedState.netChips);
+    draft.result.netChips = null;
     draft.timeline = activeImport
       ? { actions: activeImport.timeline || [] }
       : null;
@@ -1232,6 +1268,10 @@ export function UnifiedHandForm({
         draft.result.netBb = estimate.estimatedNetBb;
         assumptionNotes.push(...estimate.assumptions);
       }
+    }
+    const bbForChipDerive = numberOrNull(effectiveBbSize);
+    if (draft.result.netBb != null && bbForChipDerive != null && bbForChipDerive > 0) {
+      draft.result.netChips = Number((draft.result.netBb * bbForChipDerive).toFixed(4));
     }
 
     const netConsistency = evaluateFoldNetConsistency(
@@ -1332,18 +1372,22 @@ export function UnifiedHandForm({
       setVillainStackDepthBb('');
       setPreflopAction('none');
       setPreflopAmountBb('');
+      setPreflopStreetNetBb('');
       setPreflopFacingAmountBb('');
       setPreflopAmountChips('');
       setFlopAction('none');
       setFlopAmountBb('');
+      setFlopStreetNetBb('');
       setFlopFacingAmountBb('');
       setFlopAmountChips('');
       setTurnAction('none');
       setTurnAmountBb('');
+      setTurnStreetNetBb('');
       setTurnFacingAmountBb('');
       setTurnAmountChips('');
       setRiverAction('none');
       setRiverAmountBb('');
+      setRiverStreetNetBb('');
       setRiverFacingAmountBb('');
       setRiverAmountChips('');
       setNetBb('');
@@ -1422,7 +1466,7 @@ export function UnifiedHandForm({
 
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Table context</label>
-          <div className="grid gap-3 md:grid-cols-5">
+          <div className="grid gap-3 md:grid-cols-4">
             <div>
               <span className="mb-1 flex min-h-[2.5rem] items-end text-xs text-slate-500">Players at table</span>
               <select
@@ -1436,17 +1480,6 @@ export function UnifiedHandForm({
                   </option>
                 ))}
               </select>
-            </div>
-            <div>
-              <span className="mb-1 flex min-h-[2.5rem] items-end text-xs text-slate-500">Small blind (optional)</span>
-              <input
-                type="number"
-                step="0.01"
-                value={sbSize}
-                onChange={(e) => setSbSize(e.target.value)}
-                className={inputClass}
-                placeholder="e.g. 0.5"
-              />
             </div>
             <div>
               <span className="mb-1 flex min-h-[2.5rem] items-end text-xs text-slate-500">Big blind (optional)</span>
@@ -1507,39 +1540,40 @@ export function UnifiedHandForm({
         <div className="space-y-2">
           <label className="block text-sm font-medium text-slate-600">Hero decisions by street</label>
           <p className="text-xs text-slate-500">
-            Enter what you committed on each street. Use Facing bet for the opponent size you had to respond to (especially when you folded).
+            Street bet size is the max BB size relevant to your decision. Street result is your win/loss on that street (useful when a fold ends the action).
           </p>
           <div className={STREET_DECISION_GRID_CLASS + ' hidden md:grid text-[11px] font-medium uppercase tracking-wide text-slate-500'}>
             <span />
             <span>Action</span>
-            <span>Hero invested (BB)</span>
-            <span>Facing bet (BB)</span>
-            <span>Hero invested ($)</span>
+            <span>Street bet size (BB)</span>
+            <span>Street result (BB)</span>
           </div>
           <StreetDecisionRow
             street="preflop"
             label="Preflop (required)"
             action={preflopAction}
-            amountBb={preflopAmountBb}
-            facingAmountBb={preflopFacingAmountBb}
-            amountChips={preflopAmountChips}
+            streetBetBb={preflopAmountBb}
+            streetResultBb={preflopStreetNetBb}
             setAction={setPreflopAction}
-            setAmountBb={setPreflopAmountBb}
-            setFacingAmountBb={setPreflopFacingAmountBb}
-            setAmountChips={setPreflopAmountChips}
+            setStreetBetBb={(value) => {
+              setPreflopAmountBb(value);
+              setPreflopFacingAmountBb(value);
+            }}
+            setStreetResultBb={setPreflopStreetNetBb}
           />
           {showFlop && (
             <StreetDecisionRow
               street="flop"
               label="Flop"
               action={flopAction}
-              amountBb={flopAmountBb}
-              facingAmountBb={flopFacingAmountBb}
-              amountChips={flopAmountChips}
+              streetBetBb={flopAmountBb}
+              streetResultBb={flopStreetNetBb}
               setAction={setFlopAction}
-              setAmountBb={setFlopAmountBb}
-              setFacingAmountBb={setFlopFacingAmountBb}
-              setAmountChips={setFlopAmountChips}
+              setStreetBetBb={(value) => {
+                setFlopAmountBb(value);
+                setFlopFacingAmountBb(value);
+              }}
+              setStreetResultBb={setFlopStreetNetBb}
             />
           )}
           {showTurn && (
@@ -1547,13 +1581,14 @@ export function UnifiedHandForm({
               street="turn"
               label="Turn"
               action={turnAction}
-              amountBb={turnAmountBb}
-              facingAmountBb={turnFacingAmountBb}
-              amountChips={turnAmountChips}
+              streetBetBb={turnAmountBb}
+              streetResultBb={turnStreetNetBb}
               setAction={setTurnAction}
-              setAmountBb={setTurnAmountBb}
-              setFacingAmountBb={setTurnFacingAmountBb}
-              setAmountChips={setTurnAmountChips}
+              setStreetBetBb={(value) => {
+                setTurnAmountBb(value);
+                setTurnFacingAmountBb(value);
+              }}
+              setStreetResultBb={setTurnStreetNetBb}
             />
           )}
           {showRiver && (
@@ -1561,18 +1596,19 @@ export function UnifiedHandForm({
               street="river"
               label="River"
               action={riverAction}
-              amountBb={riverAmountBb}
-              facingAmountBb={riverFacingAmountBb}
-              amountChips={riverAmountChips}
+              streetBetBb={riverAmountBb}
+              streetResultBb={riverStreetNetBb}
               setAction={setRiverAction}
-              setAmountBb={setRiverAmountBb}
-              setFacingAmountBb={setRiverFacingAmountBb}
-              setAmountChips={setRiverAmountChips}
+              setStreetBetBb={(value) => {
+                setRiverAmountBb(value);
+                setRiverFacingAmountBb(value);
+              }}
+              setStreetResultBb={setRiverStreetNetBb}
             />
           )}
         </div>
 
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-1">
           <div>
             <label className="block text-sm font-medium text-slate-600 mb-1">Net result (BB, required)</label>
             <input
@@ -1583,17 +1619,9 @@ export function UnifiedHandForm({
               className={inputClass}
               placeholder="e.g. -18 or 12.5"
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">Net result ($, optional)</label>
-            <input
-              type="number"
-              step="0.01"
-              value={netChips}
-              onChange={(e) => setNetChips(e.target.value)}
-              className={inputClass}
-              placeholder="e.g. -18.00"
-            />
+            <p className="mt-1 text-xs text-slate-500">
+              Dollar result is derived automatically from net BB when Big blind size is provided.
+            </p>
           </div>
         </div>
 

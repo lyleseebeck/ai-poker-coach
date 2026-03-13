@@ -16,8 +16,8 @@ export function buildNormalizeMessages({ manualActionText, context, deterministi
     'If hand is given as shorthand like AA/AKo/76s, include hero.handCode.',
     'If exact hero cards are inferable, include hero.cards with 2 cards.',
     'Infer reasonable standard preflop sizes in BB when text is vague (for example open size, 3-bet size).',
-    'When hero calls, include heroStreetSummary.<street>.amountBb and set facingAmountBb equal to that call size.',
-    'When hero folds facing aggression, keep amountBb null and set facingAmountBb to the bet size faced (estimate when needed).',
+    'Use heroStreetSummary.<street>.amountBb as the street bet size in BB (the max bet size relevant to the hero decision).',
+    'For fold streets, include heroStreetSummary.<street>.streetNetBb when inferable (hero result for that street only).',
     'Do not infer table BB/SB stake size unless explicitly stated.',
   ].join(' ');
 
@@ -33,10 +33,10 @@ export function buildNormalizeMessages({ manualActionText, context, deterministi
         cards: ['Js', 'Th', '2d', '9c'],
       },
       heroStreetSummary: {
-        preflop: { action: 'raise', amountBb: 3, facingAmountBb: null, amountChips: null },
-        flop: { action: 'call', amountBb: 11.5, facingAmountBb: 11.5, amountChips: null },
-        turn: { action: 'fold', amountBb: null, facingAmountBb: 20, amountChips: null },
-        river: { action: 'none', amountBb: null, facingAmountBb: null, amountChips: null },
+        preflop: { action: 'raise', amountBb: 8, streetNetBb: null, facingAmountBb: 8, amountChips: null },
+        flop: { action: 'call', amountBb: 11.5, streetNetBb: null, facingAmountBb: 11.5, amountChips: null },
+        turn: { action: 'fold', amountBb: 20, streetNetBb: 0, facingAmountBb: 20, amountChips: null },
+        river: { action: 'none', amountBb: null, streetNetBb: null, facingAmountBb: null, amountChips: null },
       },
       result: {
         netBb: -20,

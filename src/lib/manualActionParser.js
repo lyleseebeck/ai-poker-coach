@@ -512,6 +512,7 @@ function defaultDecision() {
     action: 'none',
     amountBb: null,
     facingAmountBb: null,
+    streetNetBb: null,
     amountChips: null,
     source: 'manual',
   };
@@ -671,6 +672,7 @@ export function parseManualActionText(rawText, options = {}) {
         action: value.action,
         amountBb: value.amountBb,
         facingAmountBb: value.facingAmountBb ?? null,
+        streetNetBb: value.streetNetBb ?? null,
         amountChips: value.amountChips,
         source: 'manual',
       };

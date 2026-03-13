@@ -95,21 +95,25 @@ export function buildNormalizeSnapshot(raw = {}) {
 
     preflopAction: toAction(raw.preflopAction),
     preflopAmountBb: toTrimmed(raw.preflopAmountBb),
+    preflopStreetNetBb: toTrimmed(raw.preflopStreetNetBb),
     preflopFacingAmountBb: toTrimmed(raw.preflopFacingAmountBb),
     preflopAmountChips: toTrimmed(raw.preflopAmountChips),
 
     flopAction: toAction(raw.flopAction),
     flopAmountBb: toTrimmed(raw.flopAmountBb),
+    flopStreetNetBb: toTrimmed(raw.flopStreetNetBb),
     flopFacingAmountBb: toTrimmed(raw.flopFacingAmountBb),
     flopAmountChips: toTrimmed(raw.flopAmountChips),
 
     turnAction: toAction(raw.turnAction),
     turnAmountBb: toTrimmed(raw.turnAmountBb),
+    turnStreetNetBb: toTrimmed(raw.turnStreetNetBb),
     turnFacingAmountBb: toTrimmed(raw.turnFacingAmountBb),
     turnAmountChips: toTrimmed(raw.turnAmountChips),
 
     riverAction: toAction(raw.riverAction),
     riverAmountBb: toTrimmed(raw.riverAmountBb),
+    riverStreetNetBb: toTrimmed(raw.riverStreetNetBb),
     riverFacingAmountBb: toTrimmed(raw.riverFacingAmountBb),
     riverAmountChips: toTrimmed(raw.riverAmountChips),
 
@@ -255,6 +259,12 @@ export function applyParsedFieldsToSnapshot(snapshot, parsedFields, options = {}
 
   for (const street of STREETS) {
     const parsedStreet = summary?.[street] || {};
+    const suggestedStreetBet =
+      parsedStreet.amountBb != null
+        ? toNumberString(parsedStreet.amountBb)
+        : parsedStreet.facingAmountBb != null
+          ? toNumberString(parsedStreet.facingAmountBb)
+          : '';
 
     applyField({
       next,
@@ -280,7 +290,7 @@ export function applyParsedFieldsToSnapshot(snapshot, parsedFields, options = {}
       label: `${street[0].toUpperCase()}${street.slice(1)} amount (BB)`,
       type: 'number',
       currentValue: next[`${street}AmountBb`],
-      suggestedValue: parsedStreet.amountBb != null ? toNumberString(parsedStreet.amountBb) : '',
+      suggestedValue: suggestedStreetBet,
       isMissing: (value) => toTrimmed(value) === '',
       assign: (value) => {
         next[`${street}AmountBb`] = toNumberString(value);
@@ -299,6 +309,21 @@ export function applyParsedFieldsToSnapshot(snapshot, parsedFields, options = {}
       isMissing: (value) => toTrimmed(value) === '',
       assign: (value) => {
         next[`${street}FacingAmountBb`] = toNumberString(value);
+      },
+    });
+
+    applyField({
+      next,
+      conflicts,
+      fillOnlyMissing,
+      id: `heroStreetSummary.${street}.streetNetBb`,
+      label: `${street[0].toUpperCase()}${street.slice(1)} street result (BB)`,
+      type: 'number',
+      currentValue: next[`${street}StreetNetBb`],
+      suggestedValue: parsedStreet.streetNetBb != null ? toNumberString(parsedStreet.streetNetBb) : '',
+      isMissing: (value) => toTrimmed(value) === '',
+      assign: (value) => {
+        next[`${street}StreetNetBb`] = toNumberString(value);
       },
     });
 
@@ -407,6 +432,10 @@ export function applyConflictResolution(snapshot, conflict, resolution) {
         }
         if (conflict?.id === `heroStreetSummary.${street}.amountBb`) {
           next[`${street}AmountBb`] = toNumberString(value);
+          return next;
+        }
+        if (conflict?.id === `heroStreetSummary.${street}.streetNetBb`) {
+          next[`${street}StreetNetBb`] = toNumberString(value);
           return next;
         }
         if (conflict?.id === `heroStreetSummary.${street}.facingAmountBb`) {
