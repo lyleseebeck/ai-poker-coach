@@ -186,7 +186,7 @@ export function App() {
       <header className="mb-8">
         <h1 className="text-2xl font-semibold text-slate-800">AI Poker Coach</h1>
         <p className="text-slate-500 text-sm mt-1">
-          Capture real hands, get AI coaching feedback, and improve your decision-making street by street.
+          Capture real hands, get AI coaching feedback, and improve your decision-making street by street. All hand data you save is stored in your browser.
         </p>
       </header>
 
