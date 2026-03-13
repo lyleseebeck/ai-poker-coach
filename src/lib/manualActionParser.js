@@ -181,6 +181,36 @@ function findHeroAction(text) {
   return winner;
 }
 
+function findHeroActionSequence(text) {
+  const source = String(text || '');
+  const matches = [];
+
+  for (const def of ACTION_DEFS) {
+    for (const pattern of def.patterns) {
+      const re = new RegExp(pattern.source, 'ig');
+      let match = re.exec(source);
+      while (match) {
+        const heroScore = scoreHeroContext(source, match.index);
+        if (heroScore >= 0) {
+          matches.push({
+            action: def.action,
+            index: match.index,
+            matchedText: match[0],
+            heroScore,
+          });
+        }
+        match = re.exec(source);
+      }
+    }
+  }
+
+  matches.sort((a, b) => {
+    if (a.index !== b.index) return a.index - b.index;
+    return a.heroScore - b.heroScore;
+  });
+  return matches;
+}
+
 function parseStreetBoardCards(clause, street, usedCards = []) {
   if (!street || !['flop', 'turn', 'river'].includes(street)) return [];
 
@@ -307,11 +337,13 @@ function normalizeStreetAmounts(actionsByStreet, heroPosition) {
     const action = ensureKnownAction(decision.action);
     const explicitAmountBb = toNumber(decision.amountBb);
     const explicitFacingAmountBb = toNumber(decision.facingAmountBb);
+    const explicitStreetNetBb = toNumber(decision.streetNetBb);
     const nextDecision = {
       ...decision,
       action,
       amountBb: explicitAmountBb,
       facingAmountBb: explicitFacingAmountBb,
+      streetNetBb: explicitStreetNetBb,
     };
 
     if (action === 'call') {
@@ -342,6 +374,21 @@ function normalizeStreetAmounts(actionsByStreet, heroPosition) {
         if (inferredFacing != null) {
           nextDecision.facingAmountBb = inferredFacing;
           nextDecision.assumedFacingAmount = true;
+        }
+      }
+      if (
+        nextDecision.streetNetBb == null &&
+        nextDecision.villainAggressive &&
+        ['call', 'bet', 'raise', 'all_in'].includes(String(nextDecision.priorHeroAction || '').toLowerCase())
+      ) {
+        const inferredStreetLoss = estimateDefaultAmountBb(
+          street,
+          String(nextDecision.priorHeroAction || '').toLowerCase(),
+          runningPotBb
+        );
+        if (inferredStreetLoss != null) {
+          nextDecision.streetNetBb = -Math.abs(inferredStreetLoss);
+          nextDecision.assumedStreetNet = true;
         }
       }
       nextDecision.amountBb = null;
@@ -376,6 +423,12 @@ function normalizeStreetAmounts(actionsByStreet, heroPosition) {
     const contribution = toNumber(decision.amountBb);
     if (contribution != null && contribution > 0) {
       heroInvestedBb += contribution;
+    }
+    if (action === 'fold') {
+      const streetNet = toNumber(decision.streetNetBb);
+      if (streetNet != null && streetNet < 0) {
+        heroInvestedBb += Math.abs(streetNet);
+      }
     }
     if (action === 'fold') break;
   }
@@ -559,7 +612,9 @@ export function parseManualActionText(rawText, options = {}) {
       if (target === 'river') inferredBoardCards.river = boardCardsForStreet.slice(0, 1);
     }
 
-    const lastAction = findHeroAction(clause) || findLastAction(clause);
+    const heroActions = findHeroActionSequence(clause);
+    const primaryHeroAction = heroActions.length > 0 ? heroActions[heroActions.length - 1] : null;
+    const lastAction = primaryHeroAction || findLastAction(clause);
     if (!lastAction) continue;
 
     const bbAmount = parseBbAmount(clause);
@@ -581,6 +636,10 @@ export function parseManualActionText(rawText, options = {}) {
       matchedText: lastAction.matchedText || null,
       villainAggressive,
       villainJam,
+      priorHeroAction:
+        primaryHeroAction?.action === 'fold' && heroActions.length > 1
+          ? heroActions[heroActions.length - 2].action
+          : null,
     };
 
     if (candidate.action === 'call' && candidate.amountBb != null) {
@@ -682,6 +741,9 @@ export function parseManualActionText(rawText, options = {}) {
       if (value.facingAmountBb != null) {
         evidenceSnippets[`heroStreetSummary.${street}.facingAmountBb`] = String(value.facingAmountBb) + ' bb';
       }
+      if (value.streetNetBb != null) {
+        evidenceSnippets[`heroStreetSummary.${street}.streetNetBb`] = String(value.streetNetBb) + ' bb';
+      }
       if (value.amountChips != null) evidenceSnippets[`heroStreetSummary.${street}.amountChips`] = '$' + String(value.amountChips);
       if (value.assumedAmount && value.amountBb != null) {
         evidenceSnippets[`heroStreetSummary.${street}.amountBb`] = `Assumed standard size ${value.amountBb} bb from action text`;
@@ -689,6 +751,10 @@ export function parseManualActionText(rawText, options = {}) {
       if (value.assumedFacingAmount && value.facingAmountBb != null) {
         evidenceSnippets[`heroStreetSummary.${street}.facingAmountBb`] =
           `Assumed facing size ${value.facingAmountBb} bb from action text`;
+      }
+      if (value.assumedStreetNet && value.streetNetBb != null) {
+        evidenceSnippets[`heroStreetSummary.${street}.streetNetBb`] =
+          `Assumed street result ${value.streetNetBb} bb from action sequence`;
       }
     } else {
       byField[`heroStreetSummary_${street}_action`] = 0;
