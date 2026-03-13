@@ -16,7 +16,7 @@ import {
 import { CardLogo } from './CardLogo.jsx';
 
 const ACTION_OPTIONS = [
-  { value: 'none', label: 'Select action' },
+  { value: 'none', label: 'Action' },
   { value: 'fold', label: 'Fold' },
   { value: 'check', label: 'Check' },
   { value: 'call', label: 'Call' },
@@ -28,6 +28,8 @@ const ACTION_OPTIONS = [
 const AI_FALLBACK_CONFIDENCE_THRESHOLD = 0.75;
 const DEFAULT_PRE_FLOP_OPEN_BB = 2.5;
 const DEFAULT_PRE_FLOP_3BET_BB = 8;
+const STREET_DECISION_GRID_CLASS =
+  'grid gap-2 items-center md:grid-cols-[170px,minmax(11rem,1fr),minmax(10rem,1fr),minmax(10rem,1fr),minmax(10rem,1fr)]';
 
 function numberOrNull(value) {
   if (value == null || value === '') return null;
@@ -501,12 +503,12 @@ function StreetDecisionRow({
     'w-full min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white';
 
   return (
-    <div className="grid gap-2 md:grid-cols-[170px,minmax(0,1fr),minmax(0,120px),minmax(0,120px),minmax(0,120px)] items-center">
+    <div className={STREET_DECISION_GRID_CLASS}>
       <label className="text-sm font-medium text-slate-700">{label}</label>
       <select
         value={action}
         onChange={(e) => setAction(e.target.value)}
-        className={inputClass}
+        className={inputClass + ' min-w-[11rem]'}
       >
         {ACTION_OPTIONS.map((option) => (
           <option key={option.value} value={option.value}>
@@ -520,7 +522,7 @@ function StreetDecisionRow({
         value={amountBb}
         onChange={(e) => setAmountBb(e.target.value)}
         className={inputClass}
-        placeholder="You put in (BB)"
+        placeholder="Hero invested (BB)"
       />
       <input
         type="number"
@@ -528,7 +530,7 @@ function StreetDecisionRow({
         value={facingAmountBb}
         onChange={(e) => setFacingAmountBb(e.target.value)}
         className={inputClass}
-        placeholder="Facing (BB)"
+        placeholder="Facing bet (BB)"
       />
       <input
         type="number"
@@ -536,7 +538,7 @@ function StreetDecisionRow({
         value={amountChips}
         onChange={(e) => setAmountChips(e.target.value)}
         className={inputClass}
-        placeholder="$ amount"
+        placeholder="Hero invested ($)"
       />
     </div>
   );
@@ -1504,6 +1506,16 @@ export function UnifiedHandForm({
 
         <div className="space-y-2">
           <label className="block text-sm font-medium text-slate-600">Hero decisions by street</label>
+          <p className="text-xs text-slate-500">
+            Enter what you committed on each street. Use Facing bet for the opponent size you had to respond to (especially when you folded).
+          </p>
+          <div className={STREET_DECISION_GRID_CLASS + ' hidden md:grid text-[11px] font-medium uppercase tracking-wide text-slate-500'}>
+            <span />
+            <span>Action</span>
+            <span>Hero invested (BB)</span>
+            <span>Facing bet (BB)</span>
+            <span>Hero invested ($)</span>
+          </div>
           <StreetDecisionRow
             street="preflop"
             label="Preflop (required)"
