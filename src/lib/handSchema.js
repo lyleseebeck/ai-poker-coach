@@ -22,6 +22,7 @@ function defaultStreetDecision(source = 'manual') {
     action: 'none',
     amountBb: null,
     amountChips: null,
+    facingAmountBb: null,
     source,
   };
 }
@@ -32,6 +33,7 @@ function sanitizeStreetDecision(decision, defaultSource = 'manual') {
     action: isValidAction(rawAction) ? rawAction : 'none',
     amountBb: toNumberOrNull(decision?.amountBb),
     amountChips: toNumberOrNull(decision?.amountChips),
+    facingAmountBb: toNumberOrNull(decision?.facingAmountBb),
     source: decision?.source || defaultSource,
   };
 }

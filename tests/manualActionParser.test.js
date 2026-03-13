@@ -48,7 +48,11 @@ test('tracks hero actions by street and infers standard 3-bet sizing when amount
   assert.equal(parsed.parsedFields.heroStreetSummary.preflop.action, 'raise');
   assert.equal(parsed.parsedFields.heroStreetSummary.preflop.amountBb, 8);
   assert.equal(parsed.parsedFields.heroStreetSummary.flop.action, 'call');
+  assert.equal(parsed.parsedFields.heroStreetSummary.flop.amountBb, 11.55);
+  assert.equal(parsed.parsedFields.heroStreetSummary.flop.facingAmountBb, 11.55);
   assert.equal(parsed.parsedFields.heroStreetSummary.turn.action, 'fold');
+  assert.equal(parsed.parsedFields.heroStreetSummary.turn.facingAmountBb, 40.6);
+  assert.equal(parsed.parsedFields.result.netBb, -19.55);
   assert.equal(parsed.missingRequired.includes('heroStreetSummary.flop.action'), false);
   assert.equal(parsed.missingRequired.includes('heroStreetSummary.turn.action'), false);
   assert.equal(parsed.parsedFields.board.cards.length >= 4, true);

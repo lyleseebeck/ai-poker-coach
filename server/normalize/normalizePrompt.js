@@ -10,12 +10,14 @@ export function buildNormalizeMessages({ manualActionText, context, deterministi
   const system = [
     'You normalize poker hand narratives into strict JSON for a hand-capture form.',
     'Return ONLY JSON. No markdown fences. No prose.',
-    'Do not invent values you cannot infer. Use null/omit uncertain fields.',
+    'Estimate reasonable action sizes in BB when needed, but do not fabricate stake sizes or card identities.',
     'Action enums must be one of: fold, check, call, bet, raise, all_in, none.',
     'Card format must be rank+suit like As, Td, 7c.',
     'If hand is given as shorthand like AA/AKo/76s, include hero.handCode.',
     'If exact hero cards are inferable, include hero.cards with 2 cards.',
     'Infer reasonable standard preflop sizes in BB when text is vague (for example open size, 3-bet size).',
+    'When hero calls, include heroStreetSummary.<street>.amountBb and set facingAmountBb equal to that call size.',
+    'When hero folds facing aggression, keep amountBb null and set facingAmountBb to the bet size faced (estimate when needed).',
     'Do not infer table BB/SB stake size unless explicitly stated.',
   ].join(' ');
 
@@ -31,10 +33,10 @@ export function buildNormalizeMessages({ manualActionText, context, deterministi
         cards: ['Js', 'Th', '2d', '9c'],
       },
       heroStreetSummary: {
-        preflop: { action: 'raise', amountBb: 3, amountChips: null },
-        flop: { action: 'call', amountBb: null, amountChips: null },
-        turn: { action: 'fold', amountBb: null, amountChips: null },
-        river: { action: 'none', amountBb: null, amountChips: null },
+        preflop: { action: 'raise', amountBb: 3, facingAmountBb: null, amountChips: null },
+        flop: { action: 'call', amountBb: 11.5, facingAmountBb: 11.5, amountChips: null },
+        turn: { action: 'fold', amountBb: null, facingAmountBb: 20, amountChips: null },
+        river: { action: 'none', amountBb: null, facingAmountBb: null, amountChips: null },
       },
       result: {
         netBb: -20,
@@ -64,7 +66,7 @@ export function buildNormalizeMessages({ manualActionText, context, deterministi
     'Deterministic parse JSON:',
     safeJson(deterministicParse || {}),
     '',
-    'Return JSON matching this shape (omit unknown fields instead of guessing):',
+    'Return JSON matching this shape (estimate reasonable action sizes in BB when the narrative is vague; avoid stake-size guesses):',
     safeJson(schema),
   ].join('\n');
 

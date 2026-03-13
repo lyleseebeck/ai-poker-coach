@@ -19,12 +19,14 @@ function makeValidFlopDraft() {
   draft.heroStreetSummary.preflop = {
     action: 'call',
     amountBb: 1,
+    facingAmountBb: 1,
     amountChips: 1,
     source: 'manual',
   };
   draft.heroStreetSummary.flop = {
     action: 'fold',
     amountBb: null,
+    facingAmountBb: 4.5,
     amountChips: null,
     source: 'manual',
   };
@@ -75,6 +77,7 @@ test('preflop-only draft builds with postflop decisions set to null', () => {
   draft.heroStreetSummary.preflop = {
     action: 'fold',
     amountBb: null,
+    facingAmountBb: 2.5,
     amountChips: null,
     source: 'manual',
   };
@@ -83,6 +86,7 @@ test('preflop-only draft builds with postflop decisions set to null', () => {
   const hand = buildHandRecordV2(draft, { requireBb: true });
   assert.equal(hand.board.didReachFlop, false);
   assert.deepEqual(hand.board.cards, []);
+  assert.equal(hand.heroStreetSummary.preflop.facingAmountBb, 2.5);
   assert.equal(hand.heroStreetSummary.flop, null);
   assert.equal(hand.heroStreetSummary.turn, null);
   assert.equal(hand.heroStreetSummary.river, null);

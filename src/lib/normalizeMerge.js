@@ -95,18 +95,22 @@ export function buildNormalizeSnapshot(raw = {}) {
 
     preflopAction: toAction(raw.preflopAction),
     preflopAmountBb: toTrimmed(raw.preflopAmountBb),
+    preflopFacingAmountBb: toTrimmed(raw.preflopFacingAmountBb),
     preflopAmountChips: toTrimmed(raw.preflopAmountChips),
 
     flopAction: toAction(raw.flopAction),
     flopAmountBb: toTrimmed(raw.flopAmountBb),
+    flopFacingAmountBb: toTrimmed(raw.flopFacingAmountBb),
     flopAmountChips: toTrimmed(raw.flopAmountChips),
 
     turnAction: toAction(raw.turnAction),
     turnAmountBb: toTrimmed(raw.turnAmountBb),
+    turnFacingAmountBb: toTrimmed(raw.turnFacingAmountBb),
     turnAmountChips: toTrimmed(raw.turnAmountChips),
 
     riverAction: toAction(raw.riverAction),
     riverAmountBb: toTrimmed(raw.riverAmountBb),
+    riverFacingAmountBb: toTrimmed(raw.riverFacingAmountBb),
     riverAmountChips: toTrimmed(raw.riverAmountChips),
 
     netBb: toTrimmed(raw.netBb),
@@ -287,6 +291,21 @@ export function applyParsedFieldsToSnapshot(snapshot, parsedFields, options = {}
       next,
       conflicts,
       fillOnlyMissing,
+      id: `heroStreetSummary.${street}.facingAmountBb`,
+      label: `${street[0].toUpperCase()}${street.slice(1)} facing amount (BB)`,
+      type: 'number',
+      currentValue: next[`${street}FacingAmountBb`],
+      suggestedValue: parsedStreet.facingAmountBb != null ? toNumberString(parsedStreet.facingAmountBb) : '',
+      isMissing: (value) => toTrimmed(value) === '',
+      assign: (value) => {
+        next[`${street}FacingAmountBb`] = toNumberString(value);
+      },
+    });
+
+    applyField({
+      next,
+      conflicts,
+      fillOnlyMissing,
       id: `heroStreetSummary.${street}.amountChips`,
       label: `${street[0].toUpperCase()}${street.slice(1)} amount ($)`,
       type: 'number',
@@ -388,6 +407,10 @@ export function applyConflictResolution(snapshot, conflict, resolution) {
         }
         if (conflict?.id === `heroStreetSummary.${street}.amountBb`) {
           next[`${street}AmountBb`] = toNumberString(value);
+          return next;
+        }
+        if (conflict?.id === `heroStreetSummary.${street}.facingAmountBb`) {
+          next[`${street}FacingAmountBb`] = toNumberString(value);
           return next;
         }
         if (conflict?.id === `heroStreetSummary.${street}.amountChips`) {

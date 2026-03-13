@@ -34,7 +34,7 @@ test('normalizeHandFromText merges valid model payload on top of deterministic p
             },
             heroStreetSummary: {
               preflop: { action: 'raise', amountBb: 9 },
-              turn: { action: 'fold' },
+              turn: { action: 'fold', facingAmountBb: 24 },
             },
             result: {
               netBb: -25,
@@ -56,6 +56,7 @@ test('normalizeHandFromText merges valid model payload on top of deterministic p
   assert.equal(response.meta.model, 'test/model:free');
   assert.equal(response.parsedFields.hero.position, 'BTN');
   assert.equal(response.parsedFields.heroStreetSummary.preflop.action, 'raise');
+  assert.equal(response.parsedFields.heroStreetSummary.turn.facingAmountBb, 24);
   assert.equal(response.parsedFields.result.netBb, -25);
   assert.equal(Array.isArray(response.parsedFields.hero.cards), true);
   assert.equal(response.parsedFields.hero.cards.length, 2);

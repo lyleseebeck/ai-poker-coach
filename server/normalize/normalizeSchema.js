@@ -96,9 +96,10 @@ function sanitizeDecision(raw, label) {
 
   const hasAction = raw.action != null && raw.action !== '';
   const hasAmountBb = raw.amountBb != null && raw.amountBb !== '';
+  const hasFacingAmountBb = raw.facingAmountBb != null && raw.facingAmountBb !== '';
   const hasAmountChips = raw.amountChips != null && raw.amountChips !== '';
 
-  if (!hasAction && !hasAmountBb && !hasAmountChips) return null;
+  if (!hasAction && !hasAmountBb && !hasFacingAmountBb && !hasAmountChips) return null;
 
   const out = {};
 
@@ -116,6 +117,14 @@ function sanitizeDecision(raw, label) {
       throw toError(`${label}.amountBb must be numeric.`, 502, 'NORMALIZE_MODEL_INVALID');
     }
     out.amountBb = amountBb;
+  }
+
+  if (hasFacingAmountBb) {
+    const facingAmountBb = toFiniteNumber(raw.facingAmountBb);
+    if (facingAmountBb == null) {
+      throw toError(`${label}.facingAmountBb must be numeric.`, 502, 'NORMALIZE_MODEL_INVALID');
+    }
+    out.facingAmountBb = facingAmountBb;
   }
 
   if (hasAmountChips) {

@@ -67,6 +67,7 @@ function normalizeStreetSummary(streetSummary) {
     out[street] = {
       action: source.action || 'none',
       amountBb: source.amountBb ?? null,
+      facingAmountBb: source.facingAmountBb ?? null,
       amountChips: source.amountChips ?? null,
       source: source.source || 'manual',
     };
@@ -358,6 +359,7 @@ function mergeParsedFields(baseParsedFields, modelParsedFields) {
       ...(merged.heroStreetSummary?.[street] || {
         action: 'none',
         amountBb: null,
+        facingAmountBb: null,
         amountChips: null,
         source: 'manual',
       }),
@@ -365,6 +367,7 @@ function mergeParsedFields(baseParsedFields, modelParsedFields) {
 
     if (suggestion.action != null) current.action = suggestion.action;
     if (suggestion.amountBb != null) current.amountBb = suggestion.amountBb;
+    if (suggestion.facingAmountBb != null) current.facingAmountBb = suggestion.facingAmountBb;
     if (suggestion.amountChips != null) current.amountChips = suggestion.amountChips;
     current.source = current.source || 'manual';
 

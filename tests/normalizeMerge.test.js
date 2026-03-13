@@ -29,6 +29,7 @@ test('applyParsedFieldsToSnapshot auto-fills missing fields', () => {
     board: { didReachFlop: true, cards: ['Js', 'Th', '2d', '9c'] },
     heroStreetSummary: {
       preflop: { action: 'raise', amountBb: 3 },
+      flop: { action: 'call', amountBb: 5.5, facingAmountBb: 5.5 },
     },
     result: { netBb: -18 },
   });
@@ -44,6 +45,9 @@ test('applyParsedFieldsToSnapshot auto-fills missing fields', () => {
   assert.equal(nextSnapshot.turn, '9c');
   assert.equal(nextSnapshot.preflopAction, 'raise');
   assert.equal(nextSnapshot.preflopAmountBb, '3');
+  assert.equal(nextSnapshot.flopAction, 'call');
+  assert.equal(nextSnapshot.flopAmountBb, '5.5');
+  assert.equal(nextSnapshot.flopFacingAmountBb, '5.5');
   assert.equal(nextSnapshot.netBb, '-18');
 });
 
@@ -57,6 +61,7 @@ test('applyParsedFieldsToSnapshot flags conflicts for already-filled contradicto
     didReachFlopFilled: true,
     preflopAction: 'call',
     preflopAmountBb: '2',
+    preflopFacingAmountBb: '',
     preflopAmountChips: '',
     flopAction: 'none',
     turnAction: 'none',
@@ -69,7 +74,7 @@ test('applyParsedFieldsToSnapshot flags conflicts for already-filled contradicto
     hero: { position: 'BTN', cards: ['As', 'Ah'] },
     board: { cards: ['Js', 'Th', '2d'] },
     heroStreetSummary: {
-      preflop: { action: 'raise', amountBb: 3 },
+      preflop: { action: 'raise', amountBb: 3, facingAmountBb: 3 },
     },
     result: { netBb: -20 },
   });
@@ -78,8 +83,22 @@ test('applyParsedFieldsToSnapshot flags conflicts for already-filled contradicto
   assert.equal(conflicts.some((item) => item.id === 'hero.card1'), true);
   assert.equal(conflicts.some((item) => item.id === 'board.flop1'), true);
   assert.equal(conflicts.some((item) => item.id === 'heroStreetSummary.preflop.action'), true);
+  assert.equal(conflicts.some((item) => item.id === 'heroStreetSummary.preflop.amountBb'), true);
   assert.equal(conflicts.some((item) => item.id === 'result.netBb'), true);
   assert.equal(unresolvedConflictCount(conflicts), conflicts.length);
+});
+
+test('applyConflictResolution applies AI value for facing amount', () => {
+  const snapshot = buildNormalizeSnapshot({
+    flopFacingAmountBb: '4',
+  });
+  const conflict = {
+    id: 'heroStreetSummary.flop.facingAmountBb',
+    suggestedValue: '6.5',
+  };
+
+  const next = applyConflictResolution(snapshot, conflict, 'use_ai');
+  assert.equal(next.flopFacingAmountBb, '6.5');
 });
 
 test('applyConflictResolution applies AI value when resolution is use_ai', () => {
