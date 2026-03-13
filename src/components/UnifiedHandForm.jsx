@@ -28,8 +28,8 @@ const ACTION_OPTIONS = [
 const AI_FALLBACK_CONFIDENCE_THRESHOLD = 0.75;
 const DEFAULT_PRE_FLOP_OPEN_BB = 2.5;
 const DEFAULT_PRE_FLOP_3BET_BB = 8;
-const STREET_DECISION_GRID_CLASS =
-  'grid gap-2 items-center md:grid-cols-[170px,minmax(8rem,0.8fr),minmax(10rem,1fr),minmax(10rem,1fr)]';
+const STREET_DECISION_ROW_CLASS = 'grid gap-2 items-center md:grid-cols-[170px,minmax(0,1fr)]';
+const STREET_DECISION_CONTROLS_CLASS = 'grid gap-2 sm:grid-cols-3';
 
 function numberOrNull(value) {
   if (value == null || value === '') return null;
@@ -512,35 +512,37 @@ function StreetDecisionRow({
     'w-full min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white';
 
   return (
-    <div className={STREET_DECISION_GRID_CLASS}>
+    <div className={STREET_DECISION_ROW_CLASS}>
       <label className="text-sm font-medium text-slate-700">{label}</label>
-      <select
-        value={action}
-        onChange={(e) => setAction(e.target.value)}
-        className={inputClass + ' min-w-[11rem]'}
-      >
-        {ACTION_OPTIONS.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <input
-        type="number"
-        step="0.1"
-        value={streetBetBb}
-        onChange={(e) => setStreetBetBb(e.target.value)}
-        className={inputClass}
-        placeholder="Street bet size (BB)"
-      />
-      <input
-        type="number"
-        step="0.1"
-        value={streetResultBb}
-        onChange={(e) => setStreetResultBb(e.target.value)}
-        className={inputClass}
-        placeholder="Street result (BB, optional)"
-      />
+      <div className={STREET_DECISION_CONTROLS_CLASS}>
+        <select
+          value={action}
+          onChange={(e) => setAction(e.target.value)}
+          className={inputClass}
+        >
+          {ACTION_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <input
+          type="number"
+          step="0.1"
+          value={streetBetBb}
+          onChange={(e) => setStreetBetBb(e.target.value)}
+          className={inputClass}
+          placeholder="Bet size (BB)"
+        />
+        <input
+          type="number"
+          step="0.1"
+          value={streetResultBb}
+          onChange={(e) => setStreetResultBb(e.target.value)}
+          className={inputClass}
+          placeholder="Street result (BB)"
+        />
+      </div>
     </div>
   );
 }
@@ -1542,12 +1544,6 @@ export function UnifiedHandForm({
           <p className="text-xs text-slate-500">
             Street bet size is the max BB size relevant to your decision. Street result is your win/loss on that street (useful when a fold ends the action).
           </p>
-          <div className={STREET_DECISION_GRID_CLASS + ' hidden md:grid text-[11px] font-medium uppercase tracking-wide text-slate-500'}>
-            <span />
-            <span>Action</span>
-            <span>Street bet size (BB)</span>
-            <span>Street result (BB)</span>
-          </div>
           <StreetDecisionRow
             street="preflop"
             label="Preflop (required)"
