@@ -121,6 +121,10 @@ export function createEmptyHandDraft() {
         bb: null,
         currency: null,
       },
+      stackDepthBb: {
+        hero: null,
+        villain: null,
+      },
     },
     board: {
       cards: [],
@@ -150,7 +154,7 @@ export function createEmptyHandDraft() {
 }
 
 export function validateHandDraft(draft, options = {}) {
-  const requireBb = options.requireBb !== false;
+  const requireBb = options.requireBb === true;
   const errors = {};
 
   const heroCard1 = normalizeCard(draft?.hero?.cards?.[0]);
@@ -275,6 +279,10 @@ export function buildHandRecordV2(draft, options = {}) {
         sb: toNumberOrNull(draft.table?.stakes?.sb),
         bb: toNumberOrNull(draft.table?.stakes?.bb),
         currency: draft.table?.stakes?.currency || null,
+      },
+      stackDepthBb: {
+        hero: toNumberOrNull(draft.table?.stackDepthBb?.hero),
+        villain: toNumberOrNull(draft.table?.stackDepthBb?.villain),
       },
     },
     board: {

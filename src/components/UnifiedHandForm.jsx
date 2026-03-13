@@ -26,11 +26,120 @@ const ACTION_OPTIONS = [
 ];
 
 const AI_FALLBACK_CONFIDENCE_THRESHOLD = 0.75;
+const DEFAULT_PRE_FLOP_OPEN_BB = 2.5;
+const DEFAULT_PRE_FLOP_3BET_BB = 8;
 
 function numberOrNull(value) {
   if (value == null || value === '') return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function roundBb(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Number(n.toFixed(2));
+}
+
+function postedBlindBbByPosition(position) {
+  const pos = normalizePosition(position);
+  if (pos === 'SB') return 0.5;
+  if (pos === 'BB') return 1;
+  return 0;
+}
+
+function getLastHeroAction(summary) {
+  for (const street of ['river', 'turn', 'flop', 'preflop']) {
+    const action = String(summary?.[street]?.action || 'none').toLowerCase();
+    if (action && action !== 'none') return { street, action };
+  }
+  return { street: null, action: 'none' };
+}
+
+function estimateStreetContributionBb(street, decision, runningPotBb, heroPosition, assumptions) {
+  const action = String(decision?.action || 'none').toLowerCase();
+  if (action === 'none' || action === 'check' || action === 'fold') return 0;
+
+  const explicitAmount = numberOrNull(decision?.amountBb);
+  if (explicitAmount != null && explicitAmount >= 0) return explicitAmount;
+
+  if (street === 'preflop') {
+    if (action === 'call') {
+      assumptions.push('Assumed preflop call size as 2.5bb (standard open).');
+      return DEFAULT_PRE_FLOP_OPEN_BB;
+    }
+    if (action === 'raise') {
+      assumptions.push('Assumed preflop raise size as 8bb (standard 3-bet sizing).');
+      return DEFAULT_PRE_FLOP_3BET_BB;
+    }
+    if (action === 'all_in') {
+      assumptions.push('Assumed preflop all-in commit as 20bb due to missing size.');
+      return 20;
+    }
+    assumptions.push('Assumed preflop investment as 2.5bb due to missing size.');
+    return DEFAULT_PRE_FLOP_OPEN_BB;
+  }
+
+  const basePot = Math.max(numberOrNull(runningPotBb) || 0, 6);
+  if (action === 'call') {
+    assumptions.push(`Assumed ${street} call size as ~66% pot (${roundBb(basePot * 0.66)}bb).`);
+    return roundBb(basePot * 0.66) || 0;
+  }
+  if (action === 'bet') {
+    assumptions.push(`Assumed ${street} bet size as ~66% pot (${roundBb(basePot * 0.66)}bb).`);
+    return roundBb(basePot * 0.66) || 0;
+  }
+  if (action === 'raise') {
+    assumptions.push(`Assumed ${street} raise size as ~150% pot (${roundBb(basePot * 1.5)}bb).`);
+    return roundBb(basePot * 1.5) || 0;
+  }
+  if (action === 'all_in') {
+    const fallback = Math.max(roundBb(basePot * 1.5) || 0, 20);
+    assumptions.push(`Assumed ${street} all-in investment as ${fallback}bb due to missing size.`);
+    return fallback;
+  }
+
+  if (action === 'fold') {
+    return street === 'preflop' ? postedBlindBbByPosition(heroPosition) : 0;
+  }
+
+  return 0;
+}
+
+function estimateNetBbFromSummary(summary, heroPosition) {
+  const assumptions = [];
+  const lastAction = getLastHeroAction(summary);
+  let heroInvestedBb = postedBlindBbByPosition(heroPosition);
+  let runningPotBb = 1.5;
+
+  for (const street of ['preflop', 'flop', 'turn', 'river']) {
+    const decision = summary?.[street] || {};
+    const contribution = estimateStreetContributionBb(
+      street,
+      decision,
+      runningPotBb,
+      heroPosition,
+      assumptions
+    );
+    heroInvestedBb += contribution;
+    runningPotBb += contribution * 2;
+
+    if (String(decision?.action || 'none').toLowerCase() === 'fold') {
+      break;
+    }
+  }
+
+  if (lastAction.action === 'fold') {
+    return {
+      estimatedNetBb: -roundBb(heroInvestedBb),
+      assumptions: [`Estimated net result in BB as -${roundBb(heroInvestedBb)} based on inferred street investments.`, ...assumptions],
+    };
+  }
+
+  return {
+    estimatedNetBb: null,
+    assumptions,
+  };
 }
 
 function normalizePosition(value) {
@@ -398,6 +507,8 @@ export function UnifiedHandForm({
   const [heroPosition, setHeroPosition] = useState('');
   const [sbSize, setSbSize] = useState('');
   const [bbSize, setBbSize] = useState('');
+  const [heroStackDepthBb, setHeroStackDepthBb] = useState('');
+  const [villainStackDepthBb, setVillainStackDepthBb] = useState('');
 
   const [preflopAction, setPreflopAction] = useState('none');
   const [preflopAmountBb, setPreflopAmountBb] = useState('');
@@ -972,6 +1083,8 @@ export function UnifiedHandForm({
     draft.table.tableName = activeImport?.parsed?.tableName || null;
     draft.table.stakes.sb = numberOrNull(effectiveSbSize);
     draft.table.stakes.bb = numberOrNull(effectiveBbSize);
+    draft.table.stackDepthBb.hero = numberOrNull(heroStackDepthBb);
+    draft.table.stackDepthBb.villain = numberOrNull(villainStackDepthBb);
     draft.board.didReachFlop = effectiveDidReachFlop;
     draft.board.cards = effectiveBoardCards;
     draft.heroStreetSummary.preflop = {
@@ -1012,7 +1125,40 @@ export function UnifiedHandForm({
       manualActionText: manualActionText.trim() ? 'manual' : 'manual',
     };
 
-    const validation = validateHandDraft(draft, { requireBb: true });
+    const assumptionNotes = [];
+    if (manualParseResult?.parsed?.evidenceSnippets) {
+      for (const [field, note] of Object.entries(manualParseResult.parsed.evidenceSnippets)) {
+        if (!/assumed/i.test(String(note || ''))) continue;
+        assumptionNotes.push(`${field}: ${String(note)}`);
+      }
+    }
+
+    if (draft.result.netBb == null) {
+      const estimate = estimateNetBbFromSummary(draft.heroStreetSummary, effectiveHeroPosition);
+      if (estimate.estimatedNetBb != null) {
+        draft.result.netBb = estimate.estimatedNetBb;
+        assumptionNotes.push(...estimate.assumptions);
+      }
+    }
+
+    const assumptionSet = [...new Set(assumptionNotes.filter(Boolean))];
+    if (assumptionSet.length > 0) {
+      const assumptionMessage = [
+        'I made assumptions for missing fields:',
+        ...assumptionSet.map((line) => `- ${line}`),
+        '',
+        'Click OK to save this hand with these assumptions, or Cancel to edit first.',
+      ].join('\n');
+      const accepted = window.confirm(assumptionMessage);
+      if (!accepted) {
+        setFormErrors({
+          assumptions: 'Save canceled. Review the assumed fields and try again.',
+        });
+        return;
+      }
+    }
+
+    const validation = validateHandDraft(draft, { requireBb: false });
     const currentManualSignature = manualTextSignature(manualActionText);
     const shouldTryAiFallback =
       !activeImport &&
@@ -1062,7 +1208,7 @@ export function UnifiedHandForm({
     }
 
     try {
-      const hand = buildHandRecordV2(draft, { requireBb: true });
+      const hand = buildHandRecordV2(draft, { requireBb: false });
       const hands = getHands();
       hands.push(hand);
       saveHands(hands);
@@ -1072,6 +1218,8 @@ export function UnifiedHandForm({
       setHeroPosition('');
       setSbSize('');
       setBbSize('');
+      setHeroStackDepthBb('');
+      setVillainStackDepthBb('');
       setPreflopAction('none');
       setPreflopAmountBb('');
       setPreflopAmountChips('');
@@ -1160,7 +1308,7 @@ export function UnifiedHandForm({
 
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Table context</label>
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-5">
             <div>
               <span className="text-xs text-slate-500">Players at table</span>
               <select
@@ -1187,7 +1335,7 @@ export function UnifiedHandForm({
               />
             </div>
             <div>
-              <span className="text-xs text-slate-500">Big blind (required)</span>
+              <span className="text-xs text-slate-500">Big blind (optional)</span>
               <input
                 type="number"
                 step="0.01"
@@ -1195,6 +1343,28 @@ export function UnifiedHandForm({
                 onChange={(e) => setBbSize(e.target.value)}
                 className={inputClass}
                 placeholder="e.g. 1"
+              />
+            </div>
+            <div>
+              <span className="text-xs text-slate-500">Hero stack (BB, optional)</span>
+              <input
+                type="number"
+                step="0.1"
+                value={heroStackDepthBb}
+                onChange={(e) => setHeroStackDepthBb(e.target.value)}
+                className={inputClass}
+                placeholder="e.g. 100"
+              />
+            </div>
+            <div>
+              <span className="text-xs text-slate-500">Villain stack (BB, optional)</span>
+              <input
+                type="number"
+                step="0.1"
+                value={villainStackDepthBb}
+                onChange={(e) => setVillainStackDepthBb(e.target.value)}
+                className={inputClass}
+                placeholder="e.g. 100"
               />
             </div>
           </div>

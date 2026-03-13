@@ -27,6 +27,15 @@ export function HandCard({ hand, onDelete }) {
         ? `${hand.table.stakes.sb}/${hand.table.stakes.bb}`
         : `BB ${hand.table.stakes.bb}`
       : null;
+  const stackInfo =
+    hand.table?.stackDepthBb?.hero != null || hand.table?.stackDepthBb?.villain != null
+      ? [
+          hand.table?.stackDepthBb?.hero != null ? `Hero ${Number(hand.table.stackDepthBb.hero).toFixed(1)}bb` : null,
+          hand.table?.stackDepthBb?.villain != null ? `Villain ${Number(hand.table.stackDepthBb.villain).toFixed(1)}bb` : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      : null;
   const timelineActions = Array.isArray(hand.timeline?.actions) ? hand.timeline.actions : [];
 
   const streetParts = [];
@@ -77,6 +86,7 @@ export function HandCard({ hand, onDelete }) {
               {hand.table?.numPlayers ? `${hand.table.numPlayers} players` : ''}
             </p>
           )}
+          {stackInfo && <p className="text-xs text-slate-500 mt-1">Stacks: {stackInfo}</p>}
           <p className="text-xs text-slate-500 mt-1">
             Board: <span className="font-mono">{boardStr}</span>
           </p>

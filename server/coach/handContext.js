@@ -167,6 +167,10 @@ export function buildHandContext(hand) {
         bb: numberOrNull(hand?.table?.stakes?.bb),
         currency: hand?.table?.stakes?.currency || null,
       },
+      stackDepthBb: {
+        hero: numberOrNull(hand?.table?.stackDepthBb?.hero),
+        villain: numberOrNull(hand?.table?.stackDepthBb?.villain),
+      },
       gameType: hand?.table?.gameType || null,
       playMode: hand?.table?.playMode || null,
       tableName: hand?.table?.tableName || null,
