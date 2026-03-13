@@ -192,6 +192,14 @@ function sanitizeModelParsedFields(rawParsed) {
     };
   }
 
+  if (isPlainObject(rawParsed.board)) {
+    const boardCards = sanitizeCardArray(rawParsed.board.cards, 'parsedFields.board.cards', true, 5);
+    if (boardCards.length > 0) {
+      parsedFields.board = parsedFields.board || {};
+      parsedFields.board.cards = boardCards;
+    }
+  }
+
   if (isPlainObject(rawParsed.heroStreetSummary)) {
     const streetSummary = {};
     for (const street of STREETS) {

@@ -19,6 +19,9 @@ const STREET_PATTERNS = {
 const LOSS_HINT = /\blose|lost|down|punt(?:ed|ing)?|spew(?:ed|ing)?\b/i;
 const WIN_HINT = /\bwin|won|up|profit|value\s*own\b/i;
 const SPLIT_HINT = /\bsplit|chop|breakeven|broke even|tie|push(?:ed)?\b/i;
+const HERO_PRONOUN_PATTERN = /\b(i|me|my|mine|hero)\b/i;
+const VILLAIN_PRONOUN_PATTERN = /\b(villain|he|she|they|opponent)\b/i;
+const SUIT_FALLBACK = ['s', 'h', 'd', 'c'];
 
 function normalizeWhitespace(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -93,6 +96,137 @@ function findLastAction(text) {
   }
 
   return winner;
+}
+
+function scoreHeroContext(text, index) {
+  const left = String(text || '').slice(Math.max(0, index - 40), index).toLowerCase();
+  let score = 0;
+
+  let lastActor = null;
+  const actorPattern = /\b(i|me|my|hero|villain|he|she|they|opponent)\b/ig;
+  let actorMatch = actorPattern.exec(left);
+  while (actorMatch) {
+    lastActor = String(actorMatch[1] || '').toLowerCase();
+    actorMatch = actorPattern.exec(left);
+  }
+
+  if (lastActor) {
+    score += ['i', 'me', 'my', 'hero'].includes(lastActor) ? 5 : -5;
+  } else {
+    if (HERO_PRONOUN_PATTERN.test(left)) score += 2;
+    if (VILLAIN_PRONOUN_PATTERN.test(left)) score -= 2;
+  }
+
+  if (/\bi\b[^a-z0-9]{0,6}$/i.test(left)) score += 2;
+  if (/\b(villain|he|she|they|opponent)\b[^a-z0-9]{0,6}$/i.test(left)) score -= 2;
+
+  return score;
+}
+
+function findHeroAction(text) {
+  const source = String(text || '');
+  let winner = null;
+
+  for (const def of ACTION_DEFS) {
+    for (const pattern of def.patterns) {
+      const re = new RegExp(pattern.source, 'ig');
+      let match = re.exec(source);
+      while (match) {
+        const heroScore = scoreHeroContext(source, match.index);
+        const candidate = {
+          action: def.action,
+          index: match.index,
+          matchedText: match[0],
+          heroScore,
+        };
+        if (
+          !winner ||
+          candidate.heroScore > winner.heroScore ||
+          (candidate.heroScore === winner.heroScore && candidate.index >= winner.index)
+        ) {
+          winner = candidate;
+        }
+        match = re.exec(source);
+      }
+    }
+  }
+
+  if (winner && winner.heroScore < 0) {
+    return null;
+  }
+  return winner;
+}
+
+function parseStreetBoardCards(clause, street, usedCards = []) {
+  if (!street || !['flop', 'turn', 'river'].includes(street)) return [];
+
+  const normalizedUsed = new Set((usedCards || []).map((c) => String(c || '').trim()).filter(Boolean));
+  const explicit = [...String(clause || '').matchAll(/\b([2-9TJQKA][shdc])\b/gi)]
+    .map((m) => `${m[1][0].toUpperCase()}${m[1][1].toLowerCase()}`)
+    .filter((card) => !normalizedUsed.has(card));
+
+  if (street === 'flop' && explicit.length >= 3) return explicit.slice(0, 3);
+  if (street !== 'flop' && explicit.length >= 1) return explicit.slice(0, 1);
+
+  const withoutStreetLabel = String(clause || '')
+    .replace(/\b(preflop|flop|turn|river)\b/gi, ' ')
+    .replace(/[^2-9TJQKAshdc]/gi, ' ');
+
+  if (street === 'flop') {
+    const condensed = withoutStreetLabel.replace(/\s+/g, '').toUpperCase();
+    const rankTriplet = condensed.match(/([2-9TJQKA]{3})/);
+    if (!rankTriplet) return [];
+    const ranks = rankTriplet[1].split('');
+    const cards = [];
+    let suitIndex = 0;
+    for (const rank of ranks) {
+      while (suitIndex < SUIT_FALLBACK.length) {
+        const card = `${rank}${SUIT_FALLBACK[suitIndex]}`;
+        suitIndex += 1;
+        if (normalizedUsed.has(card) || cards.includes(card)) continue;
+        cards.push(card);
+        break;
+      }
+    }
+    return cards.length === 3 ? cards : [];
+  }
+
+  const rankMatch = withoutStreetLabel.toUpperCase().match(/\b([2-9TJQKA])\b/);
+  if (!rankMatch) return [];
+  const rank = rankMatch[1];
+  for (const suit of SUIT_FALLBACK) {
+    const card = `${rank}${suit}`;
+    if (!normalizedUsed.has(card)) return [card];
+  }
+  return [];
+}
+
+function inferPreflopAssumption(actionData, rawText) {
+  if (!actionData || actionData.action !== 'raise' || actionData.amountBb != null) return actionData;
+  const source = `${actionData.evidence || ''} ${rawText || ''}`.toLowerCase();
+  const next = { ...actionData };
+
+  if (/\b3-?bet\b/.test(source)) {
+    next.amountBb = 8;
+    next.confidence = toClampedConfidence(Math.max(next.confidence - 0.1, 0.55));
+    next.assumedAmount = true;
+    return next;
+  }
+
+  if (/\b4-?bet\b/.test(source)) {
+    next.amountBb = 22;
+    next.confidence = toClampedConfidence(Math.max(next.confidence - 0.12, 0.5));
+    next.assumedAmount = true;
+    return next;
+  }
+
+  if (/\braise|open\b/.test(source)) {
+    next.amountBb = 2.5;
+    next.confidence = toClampedConfidence(Math.max(next.confidence - 0.12, 0.5));
+    next.assumedAmount = true;
+  }
+
+  return next;
 }
 
 function parseBbAmount(text) {
@@ -190,7 +324,7 @@ function inferRequiredStreets(options, didReachFlop, rawText) {
     return sanitized;
   }
 
-  if (typeof options.boardCardsCount === 'number') {
+  if (typeof options.boardCardsCount === 'number' && options.boardCardsCount > 0) {
     const n = options.boardCardsCount;
     const streets = ['preflop'];
     if (n >= 3) streets.push('flop');
@@ -243,11 +377,31 @@ export function parseManualActionText(rawText, options = {}) {
     river: null,
   };
   const genericActionCandidates = [];
+  const inferredBoardCards = {
+    flop: [],
+    turn: [],
+    river: [],
+  };
+  let activeStreet = 'preflop';
 
   const clauses = splitClauses(text);
   for (const clause of clauses) {
     const street = findStreet(clause);
-    const lastAction = findLastAction(clause);
+    if (street) activeStreet = street;
+
+    const boardCardsForStreet = parseStreetBoardCards(
+      clause,
+      street || activeStreet,
+      [...inferredBoardCards.flop, ...inferredBoardCards.turn, ...inferredBoardCards.river]
+    );
+    if (boardCardsForStreet.length > 0) {
+      const target = street || activeStreet;
+      if (target === 'flop') inferredBoardCards.flop = boardCardsForStreet.slice(0, 3);
+      if (target === 'turn') inferredBoardCards.turn = boardCardsForStreet.slice(0, 1);
+      if (target === 'river') inferredBoardCards.river = boardCardsForStreet.slice(0, 1);
+    }
+
+    const lastAction = findHeroAction(clause) || findLastAction(clause);
     if (!lastAction) continue;
 
     const bbAmount = parseBbAmount(clause);
@@ -263,10 +417,12 @@ export function parseManualActionText(rawText, options = {}) {
       source: 'manual',
       confidence: scoreActionConfidence(Boolean(street), true, hasAmount),
       evidence: clause,
+      matchedText: lastAction.matchedText || null,
     };
 
-    if (street) {
-      actionsByStreet[street] = candidate;
+    const targetStreet = street || activeStreet;
+    if (targetStreet && ['preflop', 'flop', 'turn', 'river'].includes(targetStreet)) {
+      actionsByStreet[targetStreet] = candidate;
     } else {
       genericActionCandidates.push(candidate);
     }
@@ -279,6 +435,8 @@ export function parseManualActionText(rawText, options = {}) {
       confidence: toClampedConfidence(fallback.confidence - 0.25),
     };
   }
+
+  actionsByStreet.preflop = inferPreflopAssumption(actionsByStreet.preflop, text);
 
   const netBbData = parseBbAmount(text);
   const hasExplicitNetBb = netBbData.value != null;
@@ -323,6 +481,11 @@ export function parseManualActionText(rawText, options = {}) {
     turn: defaultDecision(),
     river: defaultDecision(),
   };
+  const boardCards = [
+    ...inferredBoardCards.flop.slice(0, 3),
+    ...inferredBoardCards.turn.slice(0, 1),
+    ...inferredBoardCards.river.slice(0, 1),
+  ].filter(Boolean);
 
   for (const street of ['preflop', 'flop', 'turn', 'river']) {
     const value = actionsByStreet[street];
@@ -337,6 +500,9 @@ export function parseManualActionText(rawText, options = {}) {
       evidenceSnippets[`heroStreetSummary.${street}.action`] = value.evidence;
       if (value.amountBb != null) evidenceSnippets[`heroStreetSummary.${street}.amountBb`] = String(value.amountBb) + ' bb';
       if (value.amountChips != null) evidenceSnippets[`heroStreetSummary.${street}.amountChips`] = '$' + String(value.amountChips);
+      if (value.assumedAmount && value.amountBb != null) {
+        evidenceSnippets[`heroStreetSummary.${street}.amountBb`] = `Assumed standard size ${value.amountBb} bb from action text`;
+      }
     } else {
       byField[`heroStreetSummary_${street}_action`] = 0;
     }
@@ -377,6 +543,7 @@ export function parseManualActionText(rawText, options = {}) {
       },
       board: {
         didReachFlop: didReach.value,
+        cards: boardCards,
       },
       heroStreetSummary,
       result: {

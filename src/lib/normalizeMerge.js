@@ -67,7 +67,15 @@ function buildFieldConflict(id, label, type, currentValue, suggestedValue) {
 function shouldTreatDidReachFlopAsFilled(snapshot) {
   if (snapshot.didReachFlopFilled) return true;
   if (snapshot.didReachFlop === false) return true;
-  if (normalizeCard(snapshot.heroCard1) || normalizeCard(snapshot.heroCard2)) return false;
+  if (
+    normalizeCard(snapshot.flop1) ||
+    normalizeCard(snapshot.flop2) ||
+    normalizeCard(snapshot.flop3) ||
+    normalizeCard(snapshot.turn) ||
+    normalizeCard(snapshot.river)
+  ) {
+    return true;
+  }
   if (snapshot.flopAction !== 'none' || snapshot.turnAction !== 'none' || snapshot.riverAction !== 'none') return true;
   return false;
 }
@@ -79,6 +87,11 @@ export function buildNormalizeSnapshot(raw = {}) {
     heroPosition: toUpper(raw.heroPosition),
     didReachFlop: toBoolean(raw.didReachFlop, true),
     didReachFlopFilled: Boolean(raw.didReachFlopFilled),
+    flop1: normalizeCard(raw.flop1) || '',
+    flop2: normalizeCard(raw.flop2) || '',
+    flop3: normalizeCard(raw.flop3) || '',
+    turn: normalizeCard(raw.turn) || '',
+    river: normalizeCard(raw.river) || '',
 
     preflopAction: toAction(raw.preflopAction),
     preflopAmountBb: toTrimmed(raw.preflopAmountBb),
@@ -155,6 +168,35 @@ export function applyParsedFieldsToSnapshot(snapshot, parsedFields, options = {}
       next.heroPosition = toUpper(value);
     },
   });
+
+  const boardCards = Array.isArray(board.cards)
+    ? board.cards.map((card) => normalizeCard(card)).filter(Boolean).slice(0, 5)
+    : [];
+  const boardFieldMap = [
+    ['board.flop1', 'Flop card 1', 'flop1', boardCards[0] || ''],
+    ['board.flop2', 'Flop card 2', 'flop2', boardCards[1] || ''],
+    ['board.flop3', 'Flop card 3', 'flop3', boardCards[2] || ''],
+    ['board.turn', 'Turn card', 'turn', boardCards[3] || ''],
+    ['board.river', 'River card', 'river', boardCards[4] || ''],
+  ];
+
+  for (const [id, label, key, suggested] of boardFieldMap) {
+    applyField({
+      next,
+      conflicts,
+      fillOnlyMissing,
+      id,
+      label,
+      type: 'card',
+      currentValue: next[key],
+      suggestedValue: suggested,
+      isMissing: (value) => !normalizeCard(value),
+      assign: (value) => {
+        next[key] = normalizeCard(value) || '';
+        next.didReachFlopFilled = true;
+      },
+    });
+  }
 
   const heroCards = Array.isArray(hero.cards) ? hero.cards : [];
   const suggestedCard1 = normalizeCard(heroCards[0]) || '';
@@ -310,6 +352,26 @@ export function applyConflictResolution(snapshot, conflict, resolution) {
       break;
     case 'board.didReachFlop':
       next.didReachFlop = Boolean(value);
+      next.didReachFlopFilled = true;
+      break;
+    case 'board.flop1':
+      next.flop1 = normalizeCard(value) || '';
+      next.didReachFlopFilled = true;
+      break;
+    case 'board.flop2':
+      next.flop2 = normalizeCard(value) || '';
+      next.didReachFlopFilled = true;
+      break;
+    case 'board.flop3':
+      next.flop3 = normalizeCard(value) || '';
+      next.didReachFlopFilled = true;
+      break;
+    case 'board.turn':
+      next.turn = normalizeCard(value) || '';
+      next.didReachFlopFilled = true;
+      break;
+    case 'board.river':
+      next.river = normalizeCard(value) || '';
       next.didReachFlopFilled = true;
       break;
     case 'result.netBb':

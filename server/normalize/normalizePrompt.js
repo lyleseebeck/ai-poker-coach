@@ -15,6 +15,8 @@ export function buildNormalizeMessages({ manualActionText, context, deterministi
     'Card format must be rank+suit like As, Td, 7c.',
     'If hand is given as shorthand like AA/AKo/76s, include hero.handCode.',
     'If exact hero cards are inferable, include hero.cards with 2 cards.',
+    'Infer reasonable standard preflop sizes in BB when text is vague (for example open size, 3-bet size).',
+    'Do not infer table BB/SB stake size unless explicitly stated.',
   ].join(' ');
 
   const schema = {
@@ -26,6 +28,7 @@ export function buildNormalizeMessages({ manualActionText, context, deterministi
       },
       board: {
         didReachFlop: true,
+        cards: ['Js', 'Th', '2d', '9c'],
       },
       heroStreetSummary: {
         preflop: { action: 'raise', amountBb: 3, amountChips: null },

@@ -281,6 +281,11 @@ function summarizeAiProposal(proposal) {
   const netChips = fields?.result?.netChips;
   if (netChips != null) summary.push(`Net $: ${netChips}`);
 
+  const boardCards = Array.isArray(fields?.board?.cards) ? fields.board.cards : [];
+  if (boardCards.length >= 3) {
+    summary.push(`Board: ${boardCards.join(' ')}`);
+  }
+
   return summary;
 }
 
@@ -502,6 +507,11 @@ export function UnifiedHandForm({
       heroPosition,
       didReachFlop: !noFlop,
       didReachFlopFilled: hasDidReachFlopSignal(),
+      flop1,
+      flop2,
+      flop3,
+      turn,
+      river,
       ...getCurrentState(),
       ...overrides,
     });
@@ -511,6 +521,11 @@ export function UnifiedHandForm({
     setHeroCard2(snapshot.heroCard2 || '');
     setHeroPosition(snapshot.heroPosition || '');
     setNoFlop(!snapshot.didReachFlop);
+    setFlop1(snapshot.didReachFlop ? snapshot.flop1 || '' : '');
+    setFlop2(snapshot.didReachFlop ? snapshot.flop2 || '' : '');
+    setFlop3(snapshot.didReachFlop ? snapshot.flop3 || '' : '');
+    setTurn(snapshot.didReachFlop ? snapshot.turn || '' : '');
+    setRiver(snapshot.didReachFlop ? snapshot.river || '' : '');
     setFromMergedState({
       preflopAction: snapshot.preflopAction || 'none',
       preflopAmountBb: snapshot.preflopAmountBb || '',
@@ -544,18 +559,30 @@ export function UnifiedHandForm({
       boardCardsCount: boardCards.length,
       heroPosition,
     });
-    const inferredHeroPosition =
-      String(parsed.parsedFields?.hero?.position || parsed.metadata?.heroPosition || '').trim();
+    const baseSnapshot = buildSnapshot();
+    const { nextSnapshot } = applyParsedFieldsToForm(
+      parsed.parsedFields,
+      fillOnlyMissing,
+      baseSnapshot
+    );
+    const merged = {
+      preflopAction: nextSnapshot.preflopAction,
+      preflopAmountBb: nextSnapshot.preflopAmountBb,
+      preflopAmountChips: nextSnapshot.preflopAmountChips,
+      flopAction: nextSnapshot.flopAction,
+      flopAmountBb: nextSnapshot.flopAmountBb,
+      flopAmountChips: nextSnapshot.flopAmountChips,
+      turnAction: nextSnapshot.turnAction,
+      turnAmountBb: nextSnapshot.turnAmountBb,
+      turnAmountChips: nextSnapshot.turnAmountChips,
+      riverAction: nextSnapshot.riverAction,
+      riverAmountBb: nextSnapshot.riverAmountBb,
+      riverAmountChips: nextSnapshot.riverAmountChips,
+      netBb: nextSnapshot.netBb,
+      netChips: nextSnapshot.netChips,
+    };
+    const inferredHeroPosition = nextSnapshot.heroPosition || '';
 
-    if (inferredHeroPosition) {
-      const shouldSetHeroPosition = !fillOnlyMissing || !heroPosition;
-      if (shouldSetHeroPosition) {
-        setHeroPosition(inferredHeroPosition);
-      }
-    }
-
-    const merged = mergeParsedIntoState(getCurrentState(), parsed, fillOnlyMissing);
-    setFromMergedState(merged);
     setParsePreview({
       overall: parsed.confidence?.overall ?? 0,
       missingRequired: parsed.missingRequired || [],

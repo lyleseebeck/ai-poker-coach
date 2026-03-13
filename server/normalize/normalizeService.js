@@ -208,12 +208,12 @@ function detectHandCodeFromText(text) {
   return null;
 }
 
-function buildBlockedCardSet(context) {
+function buildBlockedCardSet(context, parsedBoardCards = []) {
   const blocked = new Set();
   const boardCards = Array.isArray(context?.boardCards) ? context.boardCards : [];
   const heroCards = Array.isArray(context?.heroCards) ? context.heroCards : [];
 
-  for (const card of [...boardCards, ...heroCards]) {
+  for (const card of [...boardCards, ...parsedBoardCards, ...heroCards]) {
     const normalized = normalizeCard(card);
     if (normalized) blocked.add(normalized);
   }
@@ -290,7 +290,7 @@ function sanitizeHeroCards(cards, blocked) {
 
 function ensureHeroCardInference(parsedFields, manualActionText, context, missingSet) {
   parsedFields.hero = mergeObject(parsedFields.hero, {});
-  const blocked = buildBlockedCardSet(context);
+  const blocked = buildBlockedCardSet(context, parsedFields?.board?.cards || []);
 
   let cards = sanitizeHeroCards(parsedFields.hero.cards, blocked);
   if (cards.length !== 2) {
@@ -345,6 +345,9 @@ function mergeParsedFields(baseParsedFields, modelParsedFields) {
 
   if (typeof modelParsedFields?.board?.didReachFlop === 'boolean') {
     merged.board.didReachFlop = modelParsedFields.board.didReachFlop;
+  }
+  if (Array.isArray(modelParsedFields?.board?.cards) && modelParsedFields.board.cards.length > 0) {
+    merged.board.cards = modelParsedFields.board.cards.map((card) => normalizeCard(card)).filter(Boolean);
   }
 
   for (const street of ['preflop', 'flop', 'turn', 'river']) {
