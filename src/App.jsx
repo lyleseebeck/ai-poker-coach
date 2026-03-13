@@ -8,10 +8,7 @@ import {
   TRASH_RETENTION_DAYS,
 } from './lib/storage.js';
 import { normalizeCard } from './lib/cards.js';
-import { CardPicker } from './components/CardPicker.jsx';
-import { CardLogo } from './components/CardLogo.jsx';
 import { HandList } from './components/HandList.jsx';
-import { HandDetailsForm } from './components/HandDetailsForm.jsx';
 import { TrashList } from './components/TrashList.jsx';
 import { UnifiedHandForm } from './components/UnifiedHandForm.jsx';
 import { CoachPanel } from './components/CoachPanel.jsx';
@@ -212,62 +209,13 @@ export function App() {
         setFlop3={setFlop3}
         setTurn={setTurn}
         setRiver={setRiver}
-      />
-
-      <CardPicker
-        targetId={effectiveTargetId}
-        selectedRank={cardPickerRank}
-        onSelectRank={setCardPickerRank}
+        effectiveTargetId={effectiveTargetId}
+        cardPickerRank={cardPickerRank}
+        setCardPickerRank={setCardPickerRank}
+        cardPickerError={cardPickerError}
         onApplyCard={onApplyCard}
-      />
-      {cardPickerError && <p className="mb-6 -mt-4 text-sm text-red-600">{cardPickerError}</p>}
-
-      <section className="mb-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-medium text-slate-700 mb-2">Your hand (hero)</h2>
-        <p className="text-slate-500 text-sm mb-3">Click a card then use the picker above, or pick rank/suit to fill the first empty slot.</p>
-        <div className="flex gap-3">
-          {[
-            { id: 'hero-card1', label: 'Card 1', value: heroCard1 },
-            { id: 'hero-card2', label: 'Card 2', value: heroCard2 },
-          ].map((slot) => (
-            <div key={slot.id} className="flex flex-col items-center gap-1">
-              <button
-                type="button"
-                onClick={() => registerCardPickerTarget(slot.id)}
-                className={
-                  'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus-visible:border-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-1 ' +
-                  (effectiveTargetId === slot.id ? 'border-emerald-500 bg-emerald-50/50' : 'border-transparent')
-                }
-                aria-label={`Select ${slot.label}`}
-              >
-                <CardLogo value={slot.value} />
-                <span className="text-xs text-slate-400">{slot.label}</span>
-              </button>
-              {slot.value && (
-                <button
-                  type="button"
-                  onClick={() => clearCardBySlotId(slot.id)}
-                  className="text-xs text-slate-400 hover:text-red-600 transition"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <HandDetailsForm
-        noFlop={noFlop}
-        setNoFlop={setNoFlop}
-        flop1={flop1}
-        flop2={flop2}
-        flop3={flop3}
-        turn={turn}
-        river={river}
         registerCardPickerTarget={registerCardPickerTarget}
         clearCardBySlotId={clearCardBySlotId}
-        activeCardTargetId={effectiveTargetId}
       />
 
       <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">

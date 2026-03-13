@@ -13,7 +13,9 @@ import {
   formatConflictValue,
   unresolvedConflictCount,
 } from '../lib/normalizeMerge.js';
+import { CardPicker } from './CardPicker.jsx';
 import { CardLogo } from './CardLogo.jsx';
+import { HandDetailsForm } from './HandDetailsForm.jsx';
 
 const ACTION_OPTIONS = [
   { value: 'none', label: 'Action' },
@@ -566,6 +568,13 @@ export function UnifiedHandForm({
   setFlop3,
   setTurn,
   setRiver,
+  effectiveTargetId,
+  cardPickerRank,
+  setCardPickerRank,
+  cardPickerError,
+  onApplyCard,
+  registerCardPickerTarget,
+  clearCardBySlotId,
 }) {
   const [numPlayers, setNumPlayers] = useState(8);
   const [heroPosition, setHeroPosition] = useState('');
@@ -613,6 +622,7 @@ export function UnifiedHandForm({
   const [aiProposal, setAiProposal] = useState(null);
   const [aiProposalSignature, setAiProposalSignature] = useState('');
   const [aiConflicts, setAiConflicts] = useState([]);
+  const [manualParseInFlight, setManualParseInFlight] = useState(false);
 
   const positions = POSITIONS_BY_PLAYERS[numPlayers] || [];
   const boardCards = useMemo(() => {
@@ -915,39 +925,45 @@ export function UnifiedHandForm({
   };
 
   const handleParseManualText = async () => {
-    const parseResult = runManualParser(true);
-    if (!parseResult?.parsed) return;
+    if (manualParseInFlight) return;
+    setManualParseInFlight(true);
+    try {
+      const parseResult = runManualParser(true);
+      if (!parseResult?.parsed) return;
 
-    if (shouldRequestAiFallback(parseResult.parsed)) {
-      const proposal = await requestAiProposal(parseResult.parsed);
-      if (!proposal) return;
+      if (shouldRequestAiFallback(parseResult.parsed)) {
+        const proposal = await requestAiProposal(parseResult.parsed);
+        if (!proposal) return;
 
-      const baseSnapshot = buildSnapshot({
-        ...(parseResult.merged || {}),
-        heroPosition: parseResult.inferredHeroPosition || heroPosition,
-      });
-      const { conflicts } = applyAiProposalWithConflicts(proposal, { baseSnapshot });
-      const unresolved = unresolvedConflictCount(conflicts);
+        const baseSnapshot = buildSnapshot({
+          ...(parseResult.merged || {}),
+          heroPosition: parseResult.inferredHeroPosition || heroPosition,
+        });
+        const { conflicts } = applyAiProposalWithConflicts(proposal, { baseSnapshot });
+        const unresolved = unresolvedConflictCount(conflicts);
 
-      setParsePreview({
-        overall:
-          proposal.overallConfidence ??
-          parseResult.parsed.confidence?.overall ??
-          0,
-        missingRequired: proposal.missingRequired || [],
-        message:
-          unresolved > 0
-            ? `AI auto-filled missing fields and found ${unresolved} conflicting field${unresolved === 1 ? '' : 's'} that require confirmation below.`
-            : 'AI auto-filled missing fields. Review and edit any field before saving.',
-      });
-      return;
+        setParsePreview({
+          overall:
+            proposal.overallConfidence ??
+            parseResult.parsed.confidence?.overall ??
+            0,
+          missingRequired: proposal.missingRequired || [],
+          message:
+            unresolved > 0
+              ? `AI auto-filled missing fields and found ${unresolved} conflicting field${unresolved === 1 ? '' : 's'} that require confirmation below.`
+              : 'AI auto-filled missing fields. Review and edit any field before saving.',
+        });
+        return;
+      }
+
+      setAiStatus('idle');
+      setAiError('');
+      setAiProposal(null);
+      setAiProposalSignature('');
+      setAiConflicts([]);
+    } finally {
+      setManualParseInFlight(false);
     }
-
-    setAiStatus('idle');
-    setAiError('');
-    setAiProposal(null);
-    setAiProposalSignature('');
-    setAiConflicts([]);
   };
 
   const parseImportAndApply = ({ silent = false } = {}) => {
@@ -1417,6 +1433,7 @@ export function UnifiedHandForm({
       setAiProposal(null);
       setAiProposalSignature('');
       setAiConflicts([]);
+      setManualParseInFlight(false);
     } catch (error) {
       setFormErrors(error?.validation?.errors || { form: error.message || 'Unable to save hand.' });
     }
@@ -1472,9 +1489,15 @@ export function UnifiedHandForm({
                 <button
                   type="button"
                   onClick={handleParseManualText}
-                  className="px-3 py-2 rounded-lg bg-slate-200 text-slate-700 text-sm font-medium hover:bg-slate-300 transition"
+                  disabled={manualParseInFlight}
+                  className={
+                    'px-3 py-2 rounded-lg text-sm font-medium transition ' +
+                    (manualParseInFlight
+                      ? 'bg-slate-100 text-slate-500 cursor-not-allowed'
+                      : 'bg-slate-200 text-slate-700 hover:bg-slate-300')
+                  }
                 >
-                  Parse & preview text
+                  {manualParseInFlight ? 'Parsing...' : 'Parse & preview text'}
                 </button>
                 {parsePreview && (
                   <span className="text-xs text-slate-500">
@@ -1482,6 +1505,11 @@ export function UnifiedHandForm({
                   </span>
                 )}
               </div>
+              {manualParseInFlight && (
+                <p className="text-xs text-slate-600 mt-1">
+                  Parsing your hand now. AI fallback can take a few seconds.
+                </p>
+              )}
               {parsePreview?.message && (
                 <p className="text-xs text-slate-500 mt-1">{parsePreview.message}</p>
               )}
@@ -1491,7 +1519,9 @@ export function UnifiedHandForm({
                 </p>
               )}
               {aiStatus === 'loading' && (
-                <p className="text-xs text-slate-500 mt-1">Asking AI to fill missing details...</p>
+                <p className="text-xs text-emerald-700 mt-1">
+                  AI is still working on missing details...
+                </p>
               )}
               {aiError && (
                 <p className="text-xs text-red-600 mt-1">{aiError}</p>
@@ -1609,13 +1639,63 @@ export function UnifiedHandForm({
           )}
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-slate-600 mb-1">Your hand (from above)</label>
-          <div className="flex items-center gap-2">
-            <CardLogo value={heroCard1} />
-            <CardLogo value={heroCard2} />
+        <CardPicker
+          targetId={effectiveTargetId}
+          selectedRank={cardPickerRank}
+          onSelectRank={setCardPickerRank}
+          onApplyCard={onApplyCard}
+        />
+        {cardPickerError && <p className="-mt-4 text-sm text-red-600">{cardPickerError}</p>}
+
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h3 className="text-lg font-medium text-slate-700 mb-2">Your hand (hero)</h3>
+          <p className="text-slate-500 text-sm mb-3">
+            Click a card then use the selector above, or pick rank/suit to fill the first empty slot.
+          </p>
+          <div className="flex gap-3">
+            {[
+              { id: 'hero-card1', label: 'Card 1', value: heroCard1 },
+              { id: 'hero-card2', label: 'Card 2', value: heroCard2 },
+            ].map((slot) => (
+              <div key={slot.id} className="flex flex-col items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => registerCardPickerTarget(slot.id)}
+                  className={
+                    'flex flex-col items-center gap-1 rounded-lg border-2 p-1 transition hover:border-emerald-400 focus-visible:border-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-1 ' +
+                    (effectiveTargetId === slot.id ? 'border-emerald-500 bg-emerald-50/50' : 'border-transparent')
+                  }
+                  aria-label={`Select ${slot.label}`}
+                >
+                  <CardLogo value={slot.value} />
+                  <span className="text-xs text-slate-400">{slot.label}</span>
+                </button>
+                {slot.value && (
+                  <button
+                    type="button"
+                    onClick={() => clearCardBySlotId(slot.id)}
+                    className="text-xs text-slate-400 hover:text-red-600 transition"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
         </div>
+
+        <HandDetailsForm
+          noFlop={noFlop}
+          setNoFlop={setNoFlop}
+          flop1={flop1}
+          flop2={flop2}
+          flop3={flop3}
+          turn={turn}
+          river={river}
+          registerCardPickerTarget={registerCardPickerTarget}
+          clearCardBySlotId={clearCardBySlotId}
+          activeCardTargetId={effectiveTargetId}
+        />
 
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Table context</label>
