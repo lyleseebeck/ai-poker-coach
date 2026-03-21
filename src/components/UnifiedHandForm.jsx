@@ -1738,21 +1738,6 @@ export function UnifiedHandForm({
                 >
                   Parse & preview text
                 </button>
-                {shouldShowAiFillButton && (
-                  <button
-                    type="button"
-                    onClick={handleRequestAiFill}
-                    disabled={manualParseInFlight}
-                    className={
-                      'px-3 py-2 rounded-lg text-sm font-medium transition ' +
-                      (manualParseInFlight
-                        ? 'bg-emerald-100 text-emerald-400 cursor-not-allowed'
-                        : 'bg-emerald-600 text-white hover:bg-emerald-700')
-                    }
-                  >
-                    Parser data incomplete? Let AI fill the rest
-                  </button>
-                )}
                 {manualParseInFlight && (
                   <button
                     type="button"
@@ -1768,6 +1753,20 @@ export function UnifiedHandForm({
                   </span>
                 )}
               </div>
+              {shouldShowAiFillButton && (
+                <p className="text-xs text-slate-600 mt-1">
+                  Parser data incomplete?{' '}
+                  <button
+                    type="button"
+                    onClick={handleRequestAiFill}
+                    disabled={manualParseInFlight}
+                    className="font-medium text-emerald-700 underline underline-offset-2 transition hover:text-emerald-800 disabled:text-slate-400 disabled:no-underline"
+                  >
+                    Click here
+                  </button>{' '}
+                  to let AI fill the rest.
+                </p>
+              )}
               {manualParseInFlight && (
                 <p className="text-xs text-slate-600 mt-1">
                   {parseDiagnostics.deterministicMs != null
