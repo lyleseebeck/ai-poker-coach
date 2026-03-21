@@ -5,7 +5,12 @@ import { PLAYER_COUNTS, POSITIONS_BY_PLAYERS } from '../lib/positions.js';
 import { buildHandRecordV2, createEmptyHandDraft, validateHandDraft } from '../lib/handSchema.js';
 import { parseManualActionText } from '../lib/manualActionParser.js';
 import { parseIgnitionHandHistory } from '../lib/ignitionParser.js';
-import { normalizeHandFromText } from '../lib/aiNormalizeClient.js';
+import { streamNormalizeHandFromText } from '../lib/aiNormalizeStreamClient.js';
+import {
+  createNormalizeDiagnosticsState,
+  formatDurationMs,
+  reduceNormalizeDiagnostics,
+} from '../lib/normalizeStreamDiagnostics.js';
 import {
   applyConflictResolution,
   applyParsedFieldsToSnapshot,
@@ -32,6 +37,25 @@ const DEFAULT_PRE_FLOP_OPEN_BB = 2.5;
 const DEFAULT_PRE_FLOP_3BET_BB = 8;
 const STREET_DECISION_ROW_CLASS = 'grid gap-2 items-center md:grid-cols-[170px,minmax(0,1fr)]';
 const STREET_DECISION_CONTROLS_CLASS = 'grid gap-2 sm:grid-cols-3';
+
+function attemptStatusLabel(attempt) {
+  const state = String(attempt?.state || 'pending');
+  if (state === 'running') return 'Running';
+  if (state === 'completed') return 'Completed';
+  if (state === 'failed') {
+    if (Number.isFinite(Number(attempt?.status))) return `Failed (${Number(attempt.status)})`;
+    if (attempt?.reason) return `Failed (${attempt.reason.replace(/_/g, ' ')})`;
+    return 'Failed';
+  }
+  return 'Pending';
+}
+
+function attemptDurationLabel(attempt, nowMs) {
+  if (attempt?.durationMs != null) return formatDurationMs(attempt.durationMs);
+  if (String(attempt?.state || '') !== 'running') return null;
+  if (!Number.isFinite(Number(attempt?.startedAtMs))) return null;
+  return formatDurationMs(Math.max(0, nowMs - Number(attempt.startedAtMs)));
+}
 
 function numberOrNull(value) {
   if (value == null || value === '') return null;
@@ -623,6 +647,8 @@ export function UnifiedHandForm({
   const [aiProposalSignature, setAiProposalSignature] = useState('');
   const [aiConflicts, setAiConflicts] = useState([]);
   const [manualParseInFlight, setManualParseInFlight] = useState(false);
+  const [parseDiagnostics, setParseDiagnostics] = useState(() => createNormalizeDiagnosticsState());
+  const [parseDiagnosticsNowMs, setParseDiagnosticsNowMs] = useState(() => Date.now());
 
   const positions = POSITIONS_BY_PLAYERS[numPlayers] || [];
   const boardCards = useMemo(() => {
@@ -643,6 +669,7 @@ export function UnifiedHandForm({
       setAiProposal(null);
       setAiProposalSignature('');
       setAiConflicts([]);
+      setParseDiagnostics(createNormalizeDiagnosticsState());
       return;
     }
     if (aiProposalSignature && aiProposalSignature !== signature) {
@@ -651,8 +678,17 @@ export function UnifiedHandForm({
       setAiProposal(null);
       setAiProposalSignature('');
       setAiConflicts([]);
+      setParseDiagnostics(createNormalizeDiagnosticsState());
     }
   }, [manualActionText, aiProposalSignature]);
+
+  useEffect(() => {
+    if (!manualParseInFlight) return undefined;
+    const timer = setInterval(() => {
+      setParseDiagnosticsNowMs(Date.now());
+    }, 250);
+    return () => clearInterval(timer);
+  }, [manualParseInFlight]);
 
   useEffect(() => {
     if (!isImportMode) {
@@ -841,12 +877,11 @@ export function UnifiedHandForm({
     const signature = manualTextSignature(manualActionText);
     if (!signature) return null;
 
-    if (aiProposal && aiProposalSignature === signature && aiStatus !== 'error') {
-      return aiProposal;
-    }
-
     setAiStatus('loading');
     setAiError('');
+    setAiProposal(null);
+    setAiConflicts([]);
+    setParseDiagnosticsNowMs(Date.now());
     try {
       const payload = {
         manualActionText: signature,
@@ -865,11 +900,29 @@ export function UnifiedHandForm({
         deterministicParse: manualParseResult || null,
       };
 
-      const proposal = await normalizeHandFromText(payload);
+      const proposal = await streamNormalizeHandFromText(payload, {
+        onEvent: async (event) => {
+          setParseDiagnostics((prev) => reduceNormalizeDiagnostics(prev, event, { nowMs: Date.now() }));
+          if (event.type === 'provisional_result' && event.response) {
+            setAiProposal(event.response);
+            setAiStatus('provisional');
+            setAiError('');
+          }
+          if (event.type === 'final_result' && event.response) {
+            setAiProposal(event.response);
+          }
+          if (event.type === 'error' && event.message) {
+            setAiError(event.message);
+          }
+        },
+      });
+
       setAiProposal(proposal);
       setAiProposalSignature(signature);
       setAiStatus('idle');
-      setAiError('');
+      if (proposal?.meta?.resultSource === 'model_merged') {
+        setAiError('');
+      }
       return proposal;
     } catch (error) {
       setAiStatus('error');
@@ -926,21 +979,44 @@ export function UnifiedHandForm({
 
   const handleParseManualText = async () => {
     if (manualParseInFlight) return;
+    const parseStartedAtMs = Date.now();
+    setParseDiagnostics(createNormalizeDiagnosticsState());
+    setParseDiagnosticsNowMs(parseStartedAtMs);
+    setParseDiagnostics((prev) =>
+      reduceNormalizeDiagnostics(prev, { type: 'deterministic_started' }, { nowMs: parseStartedAtMs })
+    );
     setManualParseInFlight(true);
     try {
+      const localParseStartedAtMs = Date.now();
       const parseResult = runManualParser(true);
+      const localParseMs = Date.now() - localParseStartedAtMs;
+      setParseDiagnostics((prev) =>
+        reduceNormalizeDiagnostics(
+          prev,
+          { type: 'deterministic_completed', durationMs: localParseMs },
+          { nowMs: Date.now() }
+        )
+      );
       if (!parseResult?.parsed) return;
 
       if (shouldRequestAiFallback(parseResult.parsed)) {
         const proposal = await requestAiProposal(parseResult.parsed);
         if (!proposal) return;
 
-        const baseSnapshot = buildSnapshot({
-          ...(parseResult.merged || {}),
-          heroPosition: parseResult.inferredHeroPosition || heroPosition,
-        });
-        const { conflicts } = applyAiProposalWithConflicts(proposal, { baseSnapshot });
-        const unresolved = unresolvedConflictCount(conflicts);
+        const isModelMerged = proposal?.meta?.resultSource === 'model_merged';
+        let unresolved = 0;
+
+        if (isModelMerged) {
+          const baseSnapshot = buildSnapshot({
+            ...(parseResult.merged || {}),
+            heroPosition: parseResult.inferredHeroPosition || heroPosition,
+          });
+          const applied = applyAiProposalWithConflicts(proposal, { baseSnapshot });
+          unresolved = unresolvedConflictCount(applied.conflicts);
+        } else {
+          setAiStatus('idle');
+          setAiConflicts([]);
+        }
 
         setParsePreview({
           overall:
@@ -949,7 +1025,9 @@ export function UnifiedHandForm({
             0,
           missingRequired: proposal.missingRequired || [],
           message:
-            unresolved > 0
+            !isModelMerged
+              ? 'Deterministic parse applied. AI fallback did not produce a better result this time.'
+              : unresolved > 0
               ? `AI auto-filled missing fields and found ${unresolved} conflicting field${unresolved === 1 ? '' : 's'} that require confirmation below.`
               : 'AI auto-filled missing fields. Review and edit any field before saving.',
         });
@@ -961,6 +1039,10 @@ export function UnifiedHandForm({
       setAiProposal(null);
       setAiProposalSignature('');
       setAiConflicts([]);
+      setParseDiagnostics((prev) => ({
+        ...prev,
+        phase: 'complete',
+      }));
     } finally {
       setManualParseInFlight(false);
     }
@@ -1434,6 +1516,7 @@ export function UnifiedHandForm({
       setAiProposalSignature('');
       setAiConflicts([]);
       setManualParseInFlight(false);
+      setParseDiagnostics(createNormalizeDiagnosticsState());
     } catch (error) {
       setFormErrors(error?.validation?.errors || { form: error.message || 'Unable to save hand.' });
     }
@@ -1441,6 +1524,13 @@ export function UnifiedHandForm({
 
   const inputClass =
     'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white';
+  const completedAttemptCount = parseDiagnostics.attempts.filter(
+    (attempt) => attempt.state === 'completed' || attempt.state === 'failed'
+  ).length;
+  const remainingAttemptCount = Math.max(
+    0,
+    (parseDiagnostics.totalModels || parseDiagnostics.attempts.length) - completedAttemptCount
+  );
 
   return (
     <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-8">
@@ -1507,7 +1597,9 @@ export function UnifiedHandForm({
               </div>
               {manualParseInFlight && (
                 <p className="text-xs text-slate-600 mt-1">
-                  Parsing your hand now. AI fallback can take a few seconds.
+                  {parseDiagnostics.deterministicMs != null
+                    ? `Local parse complete in ${formatDurationMs(parseDiagnostics.deterministicMs)}. AI fallback is still running.`
+                    : 'Parsing your hand now.'}
                 </p>
               )}
               {parsePreview?.message && (
@@ -1520,26 +1612,97 @@ export function UnifiedHandForm({
               )}
               {aiStatus === 'loading' && (
                 <p className="text-xs text-emerald-700 mt-1">
-                  AI is still working on missing details...
+                  AI fallback running
+                  {parseDiagnostics.totalModels > 0
+                    ? `: model ${Math.min(completedAttemptCount + 1, parseDiagnostics.totalModels)} of ${parseDiagnostics.totalModels}`
+                    : '...'}
+                </p>
+              )}
+              {aiStatus === 'provisional' && remainingAttemptCount > 0 && (
+                <p className="text-xs text-emerald-700 mt-1">
+                  Provisional AI result shown below while {remainingAttemptCount} more model
+                  {remainingAttemptCount === 1 ? '' : 's'} continue.
                 </p>
               )}
               {aiError && (
                 <p className="text-xs text-red-600 mt-1">{aiError}</p>
               )}
-              {aiProposal && aiStatus !== 'loading' && (
-                <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
-                  <p className="text-xs font-medium text-emerald-800">AI normalization complete</p>
-                  <p className="text-xs text-emerald-700 mt-1">
-                    Missing fields were auto-filled when possible. Resolve conflicts below before saving.
+              {(parseDiagnostics.deterministicMs != null || parseDiagnostics.attempts.length > 0 || aiProposal) && (
+                <div
+                  className={
+                    'mt-2 rounded-lg border px-3 py-2 ' +
+                    (aiStatus === 'provisional'
+                      ? 'border-amber-200 bg-amber-50'
+                      : 'border-emerald-200 bg-emerald-50')
+                  }
+                >
+                  <p
+                    className={
+                      'text-xs font-medium ' +
+                      (aiStatus === 'provisional' ? 'text-amber-900' : 'text-emerald-800')
+                    }
+                  >
+                    {aiStatus === 'provisional'
+                      ? 'Provisional AI normalization'
+                      : aiProposal?.meta?.resultSource === 'deterministic_fallback'
+                        ? 'Deterministic parse kept'
+                        : 'AI normalization diagnostics'}
                   </p>
-                  {aiProposal?.meta?.model && (
-                    <p className="text-[11px] text-emerald-700 mt-1">
-                      Model: {aiProposal.meta.model}
-                      {aiProposal?.meta?.fallbackUsed ? ' (fallback mode)' : ''}
-                    </p>
+                  <div
+                    className={
+                      'mt-1 space-y-1 text-xs ' +
+                      (aiStatus === 'provisional' ? 'text-amber-800' : 'text-emerald-700')
+                    }
+                  >
+                    {parseDiagnostics.deterministicMs != null && (
+                      <p>Local parse complete in {formatDurationMs(parseDiagnostics.deterministicMs)}.</p>
+                    )}
+                    {parseDiagnostics.totalModels > 0 && manualParseInFlight && (
+                      <p>
+                        AI fallback running: {completedAttemptCount} of {parseDiagnostics.totalModels} attempts finished.
+                      </p>
+                    )}
+                    {aiProposal?.meta?.timings?.providerMs != null && (
+                      <p>
+                        AI time: {formatDurationMs(aiProposal.meta.timings.providerMs)}. Total:{' '}
+                        {formatDurationMs(aiProposal.meta.timings.totalMs)}.
+                      </p>
+                    )}
+                    {aiProposal?.meta?.model && (
+                      <p>
+                        Model: {aiProposal.meta.model}
+                        {aiProposal?.meta?.fallbackUsed ? ' (fallback mode)' : ''}
+                      </p>
+                    )}
+                    {aiProposal?.meta?.attemptSummary && aiProposal.meta.attemptSummary !== 'none' && (
+                      <p>Attempt summary: {aiProposal.meta.attemptSummary}</p>
+                    )}
+                    {aiStatus === 'provisional' && parseDiagnostics.provisionalModel && (
+                      <p>
+                        Showing provisional result from {parseDiagnostics.provisionalModel}. Final winner may still change.
+                      </p>
+                    )}
+                  </div>
+                  {parseDiagnostics.attempts.length > 0 && (
+                    <div className="mt-2 rounded-md border border-white/70 bg-white/70 px-2 py-2">
+                      <p className="text-[11px] font-medium text-slate-700">Attempt timeline</p>
+                      <div className="mt-1 space-y-1">
+                        {parseDiagnostics.attempts.map((attempt) => (
+                          <div key={`${attempt.attemptIndex || attempt.model}-${attempt.state}`} className="flex items-center justify-between gap-3 text-[11px] text-slate-600">
+                            <span>
+                              {attempt.attemptIndex ? `${attempt.attemptIndex}. ` : ''}
+                              {attempt.model || 'Unknown model'} · {attemptStatusLabel(attempt)}
+                            </span>
+                            <span>
+                              {attemptDurationLabel(attempt, parseDiagnosticsNowMs) || '...'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   )}
-                  {summarizeAiProposal(aiProposal).length > 0 && (
-                    <ul className="mt-1 text-xs text-emerald-800 list-disc list-inside">
+                  {aiProposal && summarizeAiProposal(aiProposal).length > 0 && (
+                    <ul className="mt-2 text-xs text-slate-700 list-disc list-inside">
                       {summarizeAiProposal(aiProposal).map((line) => (
                         <li key={line}>{line}</li>
                       ))}

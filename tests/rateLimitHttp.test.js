@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { enforceIpRateLimit } from '../server/rateLimit/upstashRateLimit.js';
 import { handleCoachHandRequest } from '../server/coach/http.js';
-import { handleHandNormalizeRequest } from '../server/normalize/http.js';
+import { handleHandNormalizeRequest, handleHandNormalizeStreamRequest } from '../server/normalize/http.js';
 
 function makeReq({ method = 'POST', body = {}, headers = {} } = {}) {
   return { method, body, headers };
@@ -19,8 +19,11 @@ function makeRes() {
     getHeader(name) {
       return headers.get(String(name).toLowerCase());
     },
+    write(value) {
+      this.payload += String(value || '');
+    },
     end(value) {
-      this.payload = String(value || '');
+      this.payload += String(value || '');
     },
   };
 }
@@ -161,4 +164,39 @@ test('handleHandNormalizeRequest surfaces production limiter config failures as 
   const payload = readJson(res);
   assert.equal(res.statusCode, 503);
   assert.equal(payload.error.code, 'RATE_LIMIT_CONFIG');
+});
+
+test('handleHandNormalizeStreamRequest writes NDJSON events', async () => {
+  const res = makeRes();
+
+  await handleHandNormalizeStreamRequest(
+    makeReq({ body: { manualActionText: 'hero bets' } }),
+    res,
+    {
+      rateLimitImpl: async () => ({ allowed: true }),
+      normalizeHandFromTextStreamImpl: async (_body, options = {}) => {
+        await options.writeEvent?.({ type: 'deterministic_started' });
+        await options.writeEvent?.({
+          type: 'final_result',
+          response: {
+            parsedFields: {},
+            confidenceByField: {},
+            evidenceSnippets: {},
+            missingRequired: [],
+            needsUserInput: [],
+            overallConfidence: 0.8,
+            meta: {
+              provider: 'openrouter',
+              model: 'provider/model-a:free',
+              fallbackUsed: false,
+            },
+          },
+        });
+      },
+    }
+  );
+
+  assert.equal(res.getHeader('content-type'), 'application/x-ndjson; charset=utf-8');
+  assert.match(res.payload, /"type":"deterministic_started"/);
+  assert.match(res.payload, /"type":"final_result"/);
 });

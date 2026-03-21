@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeHandFromText } from '../server/normalize/normalizeService.js';
+import { normalizeHandFromText, normalizeHandFromTextStream } from '../server/normalize/normalizeService.js';
 
 function makePayload(overrides = {}) {
   return {
@@ -146,4 +146,107 @@ test('normalizeHandFromText canonicalizes shorthand hand code and avoids board d
   assert.notEqual(cards[1], 'As');
   assert.equal(cards[0][0], 'A');
   assert.equal(cards[1][0], 'A');
+});
+
+test('normalizeHandFromTextStream emits provisional result and keeps checking later attempts', async () => {
+  const events = [];
+  const provider = {
+    name: 'openrouter',
+    async generateWithProgress({ onAttempt }) {
+      await onAttempt({
+        phase: 'attempt_started',
+        model: 'provider/model-a:free',
+        attemptIndex: 1,
+        totalModels: 3,
+      });
+      await onAttempt({
+        phase: 'attempt_completed',
+        model: 'provider/model-a:free',
+        state: 'completed',
+        durationMs: 12,
+        attemptIndex: 1,
+        totalModels: 3,
+        candidate: {
+          provider: 'openrouter',
+          model: 'provider/model-a:free',
+          content: JSON.stringify({
+            parsedFields: {
+              hero: { position: 'BTN' },
+            },
+            confidenceByField: {
+              heroPosition: 0.55,
+            },
+            missingRequired: [],
+            needsUserInput: [],
+          }),
+          fallbackUsed: false,
+        },
+      });
+
+      await onAttempt({
+        phase: 'attempt_started',
+        model: 'provider/model-b:free',
+        attemptIndex: 2,
+        totalModels: 3,
+      });
+      await onAttempt({
+        phase: 'attempt_completed',
+        model: 'provider/model-b:free',
+        state: 'failed',
+        reason: 'timeout',
+        durationMs: 45_000,
+        attemptIndex: 2,
+        totalModels: 3,
+      });
+
+      await onAttempt({
+        phase: 'attempt_started',
+        model: 'provider/model-c:free',
+        attemptIndex: 3,
+        totalModels: 3,
+      });
+      await onAttempt({
+        phase: 'attempt_completed',
+        model: 'provider/model-c:free',
+        state: 'completed',
+        durationMs: 18,
+        attemptIndex: 3,
+        totalModels: 3,
+        candidate: {
+          provider: 'openrouter',
+          model: 'provider/model-c:free',
+          content: JSON.stringify({
+            parsedFields: {
+              hero: { position: 'BTN', handCode: 'AA' },
+              result: { netBb: -25 },
+            },
+            confidenceByField: {
+              heroPosition: 0.95,
+              result_netBb: 0.95,
+            },
+            missingRequired: [],
+            needsUserInput: [],
+          }),
+          fallbackUsed: true,
+        },
+      });
+    },
+  };
+
+  const response = await normalizeHandFromTextStream(makePayload(), {
+    provider,
+    writeEvent: async (event) => {
+      events.push(event);
+    },
+  });
+
+  assert.equal(events[0].type, 'deterministic_started');
+  assert.equal(events[1].type, 'deterministic_completed');
+  assert.equal(events.some((event) => event.type === 'provisional_result' && event.model === 'provider/model-a:free'), true);
+  assert.equal(events.some((event) => event.type === 'attempt_completed' && event.model === 'provider/model-b:free' && event.reason === 'timeout'), true);
+  assert.equal(events[events.length - 1].type, 'final_result');
+  assert.equal(response.meta.model, 'provider/model-c:free');
+  assert.equal(response.meta.resultSource, 'model_merged');
+  assert.equal(Array.isArray(response.meta.attempts), true);
+  assert.equal(response.meta.attempts.length, 3);
 });

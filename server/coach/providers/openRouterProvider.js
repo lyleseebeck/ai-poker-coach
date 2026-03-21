@@ -120,6 +120,10 @@ function summarizeAttempts(attempts) {
     .join(', ');
 }
 
+function nowMs() {
+  return Date.now();
+}
+
 export function resolveOpenRouterConfig(options = {}) {
   const env = options.env || process.env;
 
@@ -157,6 +161,220 @@ export function createOpenRouterProvider(options = {}) {
   return {
     name: 'openrouter',
     models: config.models,
+    async generateWithProgress({ messages, timeoutMs, validateContent, onAttempt } = {}) {
+      const attempts = [];
+      const candidates = [];
+      const resolvedTimeout = parseTimeoutMs(timeoutMs, config.timeoutMs);
+
+      for (let index = 0; index < config.models.length; index += 1) {
+        const model = config.models[index];
+        const attemptIndex = index + 1;
+        const startedAtMs = nowMs();
+        const signalState = buildAbortSignal(resolvedTimeout);
+
+        if (typeof onAttempt === 'function') {
+          await onAttempt({
+            phase: 'attempt_started',
+            model,
+            attemptIndex,
+            totalModels: config.models.length,
+            startedAtMs,
+          });
+        }
+
+        try {
+          const response = await fetchImpl(config.endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${config.apiKey}`,
+              ...(config.siteUrl ? { 'HTTP-Referer': config.siteUrl } : {}),
+              ...(config.appName ? { 'X-Title': config.appName } : {}),
+            },
+            body: JSON.stringify({
+              model,
+              messages,
+              temperature: 0,
+            }),
+            signal: signalState.signal,
+          });
+
+          const payloadText = await response.text();
+          const durationMs = Math.max(0, nowMs() - startedAtMs);
+
+          if (response.status === 401 || response.status === 403) {
+            throw createCoachError(
+              `OpenRouter authentication failed (${response.status}). ${readErrorDetail(payloadText)}`.trim(),
+              {
+                statusCode: 502,
+                code: 'COACH_PROVIDER_AUTH',
+              }
+            );
+          }
+
+          if (!response.ok) {
+            const detail = readErrorDetail(payloadText);
+            const reason = isRetryableStatus(response.status) ? 'provider_retryable_status' : 'provider_status';
+            const attempt = {
+              model,
+              state: 'failed',
+              reason,
+              status: response.status,
+              detail,
+              durationMs,
+              attemptIndex,
+            };
+            attempts.push(attempt);
+            if (typeof onAttempt === 'function') {
+              await onAttempt({
+                phase: 'attempt_completed',
+                ...attempt,
+                totalModels: config.models.length,
+              });
+            }
+
+            if (isRetryableStatus(response.status) || response.status === 400 || response.status === 404 || response.status === 402) {
+              continue;
+            }
+
+            throw createCoachError(
+              `OpenRouter request failed for model ${model}: ${response.status}${detail ? ` ${detail}` : ''}`,
+              {
+                statusCode: 502,
+                code: 'COACH_PROVIDER_ERROR',
+              }
+            );
+          }
+
+          let payloadJson;
+          try {
+            payloadJson = payloadText ? JSON.parse(payloadText) : null;
+          } catch {
+            const attempt = {
+              model,
+              state: 'failed',
+              reason: 'invalid_provider_json',
+              status: response.status,
+              durationMs,
+              attemptIndex,
+            };
+            attempts.push(attempt);
+            if (typeof onAttempt === 'function') {
+              await onAttempt({
+                phase: 'attempt_completed',
+                ...attempt,
+                totalModels: config.models.length,
+              });
+            }
+            continue;
+          }
+
+          const content = extractAssistantContent(payloadJson);
+          if (!content) {
+            const attempt = {
+              model,
+              state: 'failed',
+              reason: 'empty_content',
+              durationMs,
+              attemptIndex,
+            };
+            attempts.push(attempt);
+            if (typeof onAttempt === 'function') {
+              await onAttempt({
+                phase: 'attempt_completed',
+                ...attempt,
+                totalModels: config.models.length,
+              });
+            }
+            continue;
+          }
+
+          if (typeof validateContent === 'function') {
+            try {
+              validateContent(content);
+            } catch (error) {
+              const attempt = {
+                model,
+                state: 'failed',
+                reason: 'invalid_output',
+                detail: error?.message || 'Model output failed schema validation.',
+                errorCode: error?.code || null,
+                validationFailures: Array.isArray(error?.details?.validationFailures)
+                  ? error.details.validationFailures.map((item) => String(item))
+                  : null,
+                contentSnippet: content.slice(0, 800),
+                durationMs,
+                attemptIndex,
+              };
+              attempts.push(attempt);
+              if (typeof onAttempt === 'function') {
+                await onAttempt({
+                  phase: 'attempt_completed',
+                  ...attempt,
+                  totalModels: config.models.length,
+                });
+              }
+              continue;
+            }
+          }
+
+          const successAttempt = {
+            model,
+            state: 'completed',
+            durationMs,
+            attemptIndex,
+          };
+          attempts.push(successAttempt);
+          const candidate = {
+            provider: 'openrouter',
+            model,
+            content,
+            fallbackUsed: index > 0,
+            durationMs,
+            attemptIndex,
+          };
+          candidates.push(candidate);
+          if (typeof onAttempt === 'function') {
+            await onAttempt({
+              phase: 'attempt_completed',
+              ...successAttempt,
+              totalModels: config.models.length,
+              candidate,
+            });
+          }
+        } catch (error) {
+          if (error?.code === 'COACH_PROVIDER_AUTH' || error?.code === 'COACH_CONFIG') {
+            throw error;
+          }
+
+          const attempt = {
+            model,
+            state: 'failed',
+            reason: error?.name === 'AbortError' ? 'timeout' : 'network_error',
+            detail: error?.message || String(error),
+            durationMs: Math.max(0, nowMs() - startedAtMs),
+            attemptIndex,
+          };
+          attempts.push(attempt);
+          if (typeof onAttempt === 'function') {
+            await onAttempt({
+              phase: 'attempt_completed',
+              ...attempt,
+              totalModels: config.models.length,
+            });
+          }
+        } finally {
+          signalState.clear();
+        }
+      }
+
+      return {
+        provider: 'openrouter',
+        attempts,
+        candidates,
+        exhausted: candidates.length === 0,
+      };
+    },
     async generate({ messages, timeoutMs, validateContent } = {}) {
       const attempts = [];
       const resolvedTimeout = parseTimeoutMs(timeoutMs, config.timeoutMs);
