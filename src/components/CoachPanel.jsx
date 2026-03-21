@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { streamCoachHand } from '../lib/coachStreamClient.js';
 import { createCoachDiagnosticsState, reduceCoachDiagnostics } from '../lib/coachStreamDiagnostics.js';
 import { formatDurationMs } from '../lib/normalizeStreamDiagnostics.js';
@@ -72,6 +72,22 @@ function coachStrategyLabel(strategy) {
   return String(strategy).replace(/_/g, ' ');
 }
 
+function PlannedOrderDisclosure({ plannedOrder, strategy, tone = 'emerald' }) {
+  if (!Array.isArray(plannedOrder) || plannedOrder.length === 0) return null;
+  const textClass = tone === 'slate' ? 'text-slate-500' : 'text-emerald-700';
+  const borderClass = tone === 'slate' ? 'border-slate-200 bg-slate-50' : 'border-emerald-200/70 bg-white/50';
+
+  return (
+    <details className={`rounded-md border px-2 py-1 ${borderClass}`}>
+      <summary className={`cursor-pointer text-xs font-medium ${textClass}`}>
+        Planned order ({coachStrategyLabel(strategy) || 'static'}) · {plannedOrder.length} model
+        {plannedOrder.length === 1 ? '' : 's'}
+      </summary>
+      <p className={`mt-1 break-words text-xs ${textClass}`}>{plannedOrder.join(' -> ')}</p>
+    </details>
+  );
+}
+
 function AnalysisDetails({ analysis }) {
   return (
     <div className="mt-3 space-y-3 text-sm text-slate-700">
@@ -131,6 +147,7 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
   const [chatByHandId, setChatByHandId] = useState({});
   const [coachDiagnosticsByHandId, setCoachDiagnosticsByHandId] = useState({});
   const [coachDiagnosticsNowMs, setCoachDiagnosticsNowMs] = useState(() => Date.now());
+  const coachAbortRef = useRef(null);
 
   useEffect(() => {
     if (sortedHands.length === 0) {
@@ -198,6 +215,8 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
       ...prev,
       [targetHandId]: createCoachDiagnosticsState(),
     }));
+    const abortController = new AbortController();
+    coachAbortRef.current = abortController;
 
     try {
       const response = await streamCoachHand(
@@ -208,6 +227,7 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
           history,
         },
         {
+          signal: abortController.signal,
           onEvent: async (event) => {
             setCoachDiagnosticsByHandId((prev) => ({
               ...prev,
@@ -235,6 +255,10 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
         };
       });
     } catch (submitError) {
+      if (abortController.signal.aborted) {
+        setError('Coach request stopped.');
+        return;
+      }
       setCoachDiagnosticsByHandId((prev) => ({
         ...prev,
         [targetHandId]: reduceCoachDiagnostics(
@@ -245,8 +269,15 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
       }));
       setError(submitError?.message || 'Coach request failed.');
     } finally {
+      if (coachAbortRef.current === abortController) {
+        coachAbortRef.current = null;
+      }
       setIsSubmitting(false);
     }
+  };
+
+  const handleStopCoach = () => {
+    coachAbortRef.current?.abort();
   };
 
   return (
@@ -336,12 +367,11 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
                             {formatDurationMs(entry.meta.timings.totalMs)}.
                           </p>
                         )}
-                        {entry.meta.modelSelection?.plannedOrder?.length > 0 && (
-                          <p>
-                            Planned order ({coachStrategyLabel(entry.meta.modelSelection.strategy) || 'static'}):{' '}
-                            {entry.meta.modelSelection.plannedOrder.join(' -> ')}
-                          </p>
-                        )}
+                        <PlannedOrderDisclosure
+                          plannedOrder={entry.meta.modelSelection?.plannedOrder}
+                          strategy={entry.meta.modelSelection?.strategy}
+                          tone="slate"
+                        />
                         {entry.meta.modelSelection?.stopReason && (
                           <p>Stop reason: {entry.meta.modelSelection.stopReason.replace(/_/g, ' ')}</p>
                         )}
@@ -395,12 +425,10 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
                 {isSubmitting ? 'Coach request diagnostics' : 'Last coach request diagnostics'}
               </p>
               <div className="mt-1 space-y-1 text-xs text-emerald-700">
-                {coachDiagnostics.plannedOrder.length > 0 && (
-                  <p>
-                    Planned order ({coachStrategyLabel(coachDiagnostics.strategy) || 'static'}):{' '}
-                    {coachDiagnostics.plannedOrder.join(' -> ')}
-                  </p>
-                )}
+                <PlannedOrderDisclosure
+                  plannedOrder={coachDiagnostics.plannedOrder}
+                  strategy={coachDiagnostics.strategy}
+                />
                 {isSubmitting && coachDiagnostics.totalModels > 0 && (
                   <p>
                     Coach running: {completedAttemptCount} of {coachDiagnostics.totalModels} attempts finished.
@@ -464,13 +492,24 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
             />
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-slate-500">{draftMessage.length}/2000</p>
-              <button
-                type="submit"
-                disabled={isSubmitting || !selectedHand}
-                className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isSubmitting ? 'Coaching…' : 'Get coaching'}
-              </button>
+              <div className="flex items-center gap-2">
+                {isSubmitting && (
+                  <button
+                    type="button"
+                    onClick={handleStopCoach}
+                    className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 transition"
+                  >
+                    Stop
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  disabled={isSubmitting || !selectedHand}
+                  className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSubmitting ? 'Coaching…' : 'Get coaching'}
+                </button>
+              </div>
             </div>
           </form>
 

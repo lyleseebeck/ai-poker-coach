@@ -142,3 +142,22 @@ test('streamCoachHand reads NDJSON events and returns final response', async () 
   assert.equal(response.meta.model, 'provider/model-a:free');
   assert.equal(response.meta.timings.providerMs, 18);
 });
+
+test('streamCoachHand reports a stopped request on abort', async () => {
+  const controller = new AbortController();
+  controller.abort();
+
+  await assert.rejects(
+    () =>
+      streamCoachHand(
+        { handId: 'h1', hand: { schemaVersion: 2 }, message: 'help' },
+        {
+          signal: controller.signal,
+          fetchImpl: async () => {
+            throw new DOMException('Aborted', 'AbortError');
+          },
+        }
+      ),
+    /stopped/i
+  );
+});

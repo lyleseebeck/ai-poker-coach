@@ -354,7 +354,7 @@ test('normalizeHandFromTextStream stops early after a strong complete candidate'
         },
       });
       assert.equal(stop?.stop, true);
-      assert.equal(stop?.stopReason, 'early_accept_complete_high_confidence');
+      assert.equal(stop?.stopReason, 'first_valid_candidate');
       secondAttemptStarted = false;
     },
   };
@@ -368,6 +368,6 @@ test('normalizeHandFromTextStream stops early after a strong complete candidate'
 
   assert.equal(secondAttemptStarted, false);
   assert.equal(events.some((event) => event.type === 'selection_plan'), true);
-  assert.equal(response.meta.modelSelection.stopReason, 'early_accept_complete_high_confidence');
+  assert.equal(response.meta.modelSelection.stopReason, 'first_valid_candidate');
   assert.equal(response.meta.attempts.length, 1);
 });

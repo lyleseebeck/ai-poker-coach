@@ -431,6 +431,7 @@ async function executeCoachHand(payload, options = {}) {
       timeoutMs,
       requestKind: 'coach',
       attemptContext: { pass: 'initial' },
+      signal: options.signal,
       onAttempt: streamAttempt,
       validateContent: modelContentValidator,
     });
@@ -474,6 +475,7 @@ async function executeCoachHand(payload, options = {}) {
         timeoutMs,
         requestKind: 'coach',
         attemptContext: { pass: 'repair' },
+        signal: options.signal,
         onAttempt: streamAttempt,
         validateContent: modelContentValidator,
       });

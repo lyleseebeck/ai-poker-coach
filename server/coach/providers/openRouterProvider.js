@@ -109,14 +109,29 @@ function extractAssistantContent(responseJson) {
   return '';
 }
 
-function buildAbortSignal(timeoutMs) {
+function buildAbortSignal(timeoutMs, externalSignal) {
   const controller = new AbortController();
+  const abortFromExternalSignal = () => {
+    controller.abort(new DOMException('Request aborted by client.', 'AbortError'));
+  };
   const timer = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      abortFromExternalSignal();
+    } else {
+      externalSignal.addEventListener('abort', abortFromExternalSignal, { once: true });
+    }
+  }
   return {
     signal: controller.signal,
-    clear: () => clearTimeout(timer),
+    clear: () => {
+      clearTimeout(timer);
+      if (externalSignal) {
+        externalSignal.removeEventListener('abort', abortFromExternalSignal);
+      }
+    },
   };
 }
 
@@ -293,6 +308,7 @@ async function runOpenRouterAttempts({
   onAttempt,
   requestKind = 'coach',
   attemptContext = {},
+  signal: externalSignal,
 } = {}) {
   const attempts = [];
   const candidates = [];
@@ -317,7 +333,7 @@ async function runOpenRouterAttempts({
     const model = orderedModels[index];
     const attemptIndex = index + 1;
     const startedAtMs = nowMs();
-    const signalState = buildAbortSignal(resolvedTimeout);
+    const signalState = buildAbortSignal(resolvedTimeout, externalSignal);
 
     await emitAttempt(onAttempt, {
       phase: 'attempt_started',
@@ -528,6 +544,10 @@ async function runOpenRouterAttempts({
         throw error;
       }
 
+       if (error?.name === 'AbortError' && externalSignal?.aborted) {
+        throw error;
+      }
+
       const attempt = {
         model,
         state: 'failed',
@@ -595,7 +615,7 @@ export function createOpenRouterProvider(options = {}) {
   return {
     name: 'openrouter',
     models: config.models,
-    async generateWithProgress({ messages, timeoutMs, validateContent, onAttempt, requestKind, attemptContext } = {}) {
+    async generateWithProgress({ messages, timeoutMs, validateContent, onAttempt, requestKind, attemptContext, signal } = {}) {
       return runOpenRouterAttempts({
         config,
         fetchImpl,
@@ -608,9 +628,10 @@ export function createOpenRouterProvider(options = {}) {
         onAttempt,
         requestKind,
         attemptContext,
+        signal,
       });
     },
-    async generate({ messages, timeoutMs, validateContent, onAttempt, requestKind, attemptContext } = {}) {
+    async generate({ messages, timeoutMs, validateContent, onAttempt, requestKind, attemptContext, signal } = {}) {
       return runOpenRouterAttempts({
         config,
         fetchImpl,
@@ -623,6 +644,7 @@ export function createOpenRouterProvider(options = {}) {
         onAttempt,
         requestKind,
         attemptContext,
+        signal,
       });
     },
   };

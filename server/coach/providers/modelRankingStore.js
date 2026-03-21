@@ -82,6 +82,11 @@ function parseHashResult(raw) {
 }
 
 function summarizeAttempt(attempt) {
+  const reason = String(attempt?.reason || '').trim().toLowerCase();
+  if (reason === 'aborted' || reason === 'client_abort') {
+    return emptyStats();
+  }
+
   const stats = emptyStats();
   stats.attempts = 1;
 
@@ -92,7 +97,6 @@ function summarizeAttempt(attempt) {
     return stats;
   }
 
-  const reason = String(attempt?.reason || '').trim().toLowerCase();
   if (reason === 'timeout') {
     stats.timeouts = 1;
   } else if (

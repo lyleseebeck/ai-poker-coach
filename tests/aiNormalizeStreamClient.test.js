@@ -82,3 +82,22 @@ test('streamNormalizeHandFromText reads NDJSON events and returns final response
   assert.equal(response.meta.model, 'provider/model-a:free');
   assert.equal(response.meta.timings.providerMs, 14);
 });
+
+test('streamNormalizeHandFromText reports a stopped request on abort', async () => {
+  const controller = new AbortController();
+  controller.abort();
+
+  await assert.rejects(
+    () =>
+      streamNormalizeHandFromText(
+        { manualActionText: 'hero bets' },
+        {
+          signal: controller.signal,
+          fetchImpl: async () => {
+            throw new DOMException('Aborted', 'AbortError');
+          },
+        }
+      ),
+    /stopped/i
+  );
+});

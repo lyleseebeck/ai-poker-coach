@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getHands, saveHands } from '../lib/storage.js';
 import { normalizeCard } from '../lib/cards.js';
 import { PLAYER_COUNTS, POSITIONS_BY_PLAYERS } from '../lib/positions.js';
@@ -55,6 +55,22 @@ function attemptDurationLabel(attempt, nowMs) {
   if (String(attempt?.state || '') !== 'running') return null;
   if (!Number.isFinite(Number(attempt?.startedAtMs))) return null;
   return formatDurationMs(Math.max(0, nowMs - Number(attempt.startedAtMs)));
+}
+
+function PlannedOrderDisclosure({ plannedOrder, strategy, tone = 'emerald' }) {
+  if (!Array.isArray(plannedOrder) || plannedOrder.length === 0) return null;
+  const strategyLabel = strategy || 'static';
+  const textClass = tone === 'amber' ? 'text-amber-800' : 'text-emerald-700';
+  const borderClass = tone === 'amber' ? 'border-amber-200/70 bg-white/50' : 'border-emerald-200/70 bg-white/50';
+
+  return (
+    <details className={`rounded-md border px-2 py-1 ${borderClass}`}>
+      <summary className={`cursor-pointer text-xs font-medium ${textClass}`}>
+        Planned order ({strategyLabel}) · {plannedOrder.length} model{plannedOrder.length === 1 ? '' : 's'}
+      </summary>
+      <p className={`mt-1 break-words text-xs ${textClass}`}>{plannedOrder.join(' -> ')}</p>
+    </details>
+  );
 }
 
 function numberOrNull(value) {
@@ -651,6 +667,7 @@ export function UnifiedHandForm({
   const [manualParseInFlight, setManualParseInFlight] = useState(false);
   const [parseDiagnostics, setParseDiagnostics] = useState(() => createNormalizeDiagnosticsState());
   const [parseDiagnosticsNowMs, setParseDiagnosticsNowMs] = useState(() => Date.now());
+  const manualParseAbortRef = useRef(null);
 
   const positions = POSITIONS_BY_PLAYERS[numPlayers] || [];
   const boardCards = useMemo(() => {
@@ -924,6 +941,9 @@ export function UnifiedHandForm({
     setAiProposal(null);
     setAiConflicts([]);
     setParseDiagnosticsNowMs(Date.now());
+    const abortController = new AbortController();
+    manualParseAbortRef.current = abortController;
+    let latestProposal = null;
     try {
       const payload = {
         manualActionText: signature,
@@ -943,14 +963,17 @@ export function UnifiedHandForm({
       };
 
       const proposal = await streamNormalizeHandFromText(payload, {
+        signal: abortController.signal,
         onEvent: async (event) => {
           setParseDiagnostics((prev) => reduceNormalizeDiagnostics(prev, event, { nowMs: Date.now() }));
           if (event.type === 'provisional_result' && event.response) {
+            latestProposal = event.response;
             setAiProposal(event.response);
             setAiStatus('provisional');
             setAiError('');
           }
           if (event.type === 'final_result' && event.response) {
+            latestProposal = event.response;
             setAiProposal(event.response);
           }
           if (event.type === 'error' && event.message) {
@@ -967,13 +990,34 @@ export function UnifiedHandForm({
       }
       return proposal;
     } catch (error) {
+      if (abortController.signal.aborted) {
+        if (latestProposal) {
+          setAiProposal(latestProposal);
+          setAiProposalSignature(signature);
+          setAiStatus('idle');
+          setAiError('');
+          return latestProposal;
+        }
+
+        setAiStatus('idle');
+        setAiError('AI request stopped.');
+        return null;
+      }
       setAiStatus('error');
       setAiProposal(null);
       setAiProposalSignature(signature);
       setAiConflicts([]);
       setAiError(error?.message || 'AI assistant failed to return suggestions.');
       return null;
+    } finally {
+      if (manualParseAbortRef.current === abortController) {
+        manualParseAbortRef.current = null;
+      }
     }
+  };
+
+  const handleStopManualParse = () => {
+    manualParseAbortRef.current?.abort();
   };
 
   const applyAiProposalWithConflicts = (proposal, options = {}) => {
@@ -1632,6 +1676,15 @@ export function UnifiedHandForm({
                 >
                   {manualParseInFlight ? 'Parsing...' : 'Parse & preview text'}
                 </button>
+                {manualParseInFlight && (
+                  <button
+                    type="button"
+                    onClick={handleStopManualParse}
+                    className="px-3 py-2 rounded-lg text-sm font-medium border border-slate-300 text-slate-700 hover:bg-slate-50 transition"
+                  >
+                    Stop AI
+                  </button>
+                )}
                 {parsePreview && (
                   <span className="text-xs text-slate-500">
                     Confidence: {(parsePreview.overall * 100).toFixed(0)}%
@@ -1705,12 +1758,11 @@ export function UnifiedHandForm({
                         AI fallback running: {completedAttemptCount} of {parseDiagnostics.totalModels} attempts finished.
                       </p>
                     )}
-                    {parseDiagnostics.plannedOrder.length > 0 && (
-                      <p>
-                        Planned order ({parseDiagnostics.strategy || 'static'}):{' '}
-                        {parseDiagnostics.plannedOrder.join(' -> ')}
-                      </p>
-                    )}
+                    <PlannedOrderDisclosure
+                      plannedOrder={parseDiagnostics.plannedOrder}
+                      strategy={parseDiagnostics.strategy}
+                      tone={aiStatus === 'provisional' ? 'amber' : 'emerald'}
+                    />
                     {aiProposal?.meta?.timings?.providerMs != null && (
                       <p>
                         AI time: {formatDurationMs(aiProposal.meta.timings.providerMs)}. Total:{' '}
@@ -1729,11 +1781,13 @@ export function UnifiedHandForm({
                     {aiProposal?.meta?.modelSelection?.stopReason && (
                       <p>Stop reason: {aiProposal.meta.modelSelection.stopReason.replace(/_/g, ' ')}</p>
                     )}
-                    {aiStatus === 'provisional' && parseDiagnostics.provisionalModel && (
+                    {aiStatus === 'provisional' &&
+                      parseDiagnostics.provisionalModel &&
+                      manualParseInFlight && (
                       <p>
                         Showing provisional result from {parseDiagnostics.provisionalModel}. Final winner may still change.
                       </p>
-                    )}
+                      )}
                   </div>
                   {parseDiagnostics.attempts.length > 0 && (
                     <div className="mt-2 rounded-md border border-white/70 bg-white/70 px-2 py-2">

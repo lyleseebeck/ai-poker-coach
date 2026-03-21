@@ -62,15 +62,23 @@ export async function streamNormalizeHandFromText(payload, options = {}) {
     throw new Error('Streaming normalize requires fetch.');
   }
 
-  const response = await fetchImpl('/api/hand-normalize/stream', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/x-ndjson',
-    },
-    body: JSON.stringify(payload || {}),
-    signal: options.signal,
-  });
+  let response;
+  try {
+    response = await fetchImpl('/api/hand-normalize/stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/x-ndjson',
+      },
+      body: JSON.stringify(payload || {}),
+      signal: options.signal,
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error('AI normalize request stopped.');
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     const text = await response.text();
@@ -93,7 +101,16 @@ export async function streamNormalizeHandFromText(payload, options = {}) {
   let finalResponse = null;
 
   while (true) {
-    const { done, value } = await reader.read();
+    let chunk;
+    try {
+      chunk = await reader.read();
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error('AI normalize request stopped.');
+      }
+      throw error;
+    }
+    const { done, value } = chunk;
     buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
 
     let newlineIndex = buffer.indexOf('\n');

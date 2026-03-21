@@ -591,11 +591,8 @@ function isBetterCandidate(left, right) {
   return left.attemptIndex < right.attemptIndex;
 }
 
-function shouldEarlyAcceptNormalizeCandidate(score, candidateConfidence = null) {
-  const confidence = Number.isFinite(Number(candidateConfidence))
-    ? Math.max(score.overallConfidence, Number(candidateConfidence))
-    : score.overallConfidence;
-  return score.missingRequiredCount === 0 && confidence >= 0.85;
+function shouldStopAfterSuccessfulNormalizeCandidate(score) {
+  return score.missingRequiredCount === 0;
 }
 
 async function emitNormalizeEvent(writer, event) {
@@ -642,6 +639,7 @@ export async function normalizeHandFromText(payload, options = {}) {
       messages,
       timeoutMs,
       requestKind: 'normalize',
+      signal: options.signal,
       validateContent: (content) => {
         const parsed = parseNormalizeModelJson(content);
         validateNormalizeModelPayload(parsed);
@@ -770,6 +768,7 @@ export async function normalizeHandFromTextStream(payload, options = {}) {
       messages,
       timeoutMs,
       requestKind: 'normalize',
+      signal: options.signal,
       validateContent: (content) => {
         const parsed = parseNormalizeModelJson(content);
         validateNormalizeModelPayload(parsed);
@@ -809,7 +808,6 @@ export async function normalizeHandFromTextStream(payload, options = {}) {
             provider?.name || providerName
           );
           const score = candidateScore(mergedResponse, event.attemptIndex);
-          const candidateConfidence = averageConfidence(modelPayload.confidenceByField || {});
           nextAttempt.overallConfidence = score.overallConfidence;
           nextAttempt.missingRequiredCount = score.missingRequiredCount;
 
@@ -841,8 +839,8 @@ export async function normalizeHandFromTextStream(payload, options = {}) {
             bestCandidate = candidateResponse;
           }
 
-          if (shouldEarlyAcceptNormalizeCandidate(score, candidateConfidence)) {
-            stopReason = 'early_accept_complete_high_confidence';
+          if (shouldStopAfterSuccessfulNormalizeCandidate(score)) {
+            stopReason = 'first_valid_candidate';
             attempts.push(nextAttempt);
             await emitNormalizeEvent(writeEvent, {
               type: 'attempt_completed',

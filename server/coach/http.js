@@ -31,6 +31,19 @@ function writeNdjson(res, payload) {
   res.end(line);
 }
 
+function createRequestAbortSignal(req, res) {
+  const controller = new AbortController();
+  const abort = () => {
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+  };
+  req?.on?.('aborted', abort);
+  req?.on?.('close', abort);
+  res?.on?.('close', abort);
+  return controller;
+}
+
 function parseJsonText(raw) {
   if (!raw || !raw.trim()) return {};
   return JSON.parse(raw);
@@ -178,14 +191,24 @@ export async function handleCoachHandStreamRequest(req, res, options = {}) {
     }
 
     const body = await readJsonBody(req);
+    const requestAbortController = createRequestAbortSignal(req, res);
     startNdjson(res);
     await coachHandStreamImpl(body, {
+      signal: requestAbortController.signal,
       writeEvent: async (event) => {
         writeNdjson(res, event);
       },
     });
-    res.end();
+    if (!requestAbortController.signal.aborted) {
+      res.end();
+    }
   } catch (error) {
+    if (String(error?.name || '') === 'AbortError') {
+      try {
+        res.end();
+      } catch {}
+      return;
+    }
     const statusCode = Number(error?.statusCode) || 500;
     const payload = {
       error: {
