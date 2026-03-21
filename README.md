@@ -7,6 +7,7 @@ Core features:
 - Ignition hand history parsing
 - AI-assisted manual action normalization
 - Multi-turn GTO coaching chat per saved hand (session-only)
+- Bottom-of-page feedback form with optional screenshot attachments
 
 ---
 
@@ -60,6 +61,9 @@ Required:
 - `OPENROUTER_API_KEY=<your key>`
 - `UPSTASH_REDIS_REST_URL=<your upstash redis rest url>` (**required in production**)
 - `UPSTASH_REDIS_REST_TOKEN=<your upstash redis rest token>` (**required in production**)
+- `RESEND_API_KEY=<your resend api key>` (**required for feedback form delivery**)
+- `FEEDBACK_TO_EMAIL=<your personal inbox>`
+- `FEEDBACK_FROM_EMAIL=<verified sender email>`
 
 Optional:
 - `COACH_OPENROUTER_MODELS=<comma-separated model ids, each containing :free>`
@@ -73,6 +77,7 @@ Optional:
 - `COACH_APP_NAME=AI Poker Coach`
 - `RATE_LIMIT_COACH_PER_MINUTE=5`
 - `RATE_LIMIT_NORMALIZE_PER_MINUTE=12`
+- `RATE_LIMIT_FEEDBACK_PER_MINUTE=3`
 
 Recommended compatibility-first model order:
 - `nvidia/nemotron-3-super-120b-a12b:free`
@@ -193,6 +198,40 @@ Error response details for strict failures:
 - `error.details.attemptSummary`: summarized model-attempt outcomes.
 - `error.details.lastModel`: most recent model id used.
 
+### `POST /api/feedback`
+Request:
+```json
+{
+  "message": "The import button did nothing.",
+  "replyEmail": "player@example.com",
+  "attachments": [
+    {
+      "filename": "import-issue.jpg",
+      "contentType": "image/jpeg",
+      "contentBase64": "..."
+    }
+  ],
+  "context": {
+    "page": "/",
+    "userAgent": "Mozilla/5.0"
+  }
+}
+```
+
+Response:
+```json
+{
+  "ok": true
+}
+```
+
+Validation rules:
+- `message` is required and limited to 5,000 characters.
+- `replyEmail` is optional but must be a valid email when present.
+- `attachments` may include up to 3 screenshots.
+- Screenshot types are limited to PNG, JPG, and WebP.
+- Large screenshots are compressed client-side before submission.
+
 ---
 
 ## Deployment notes
@@ -200,9 +239,12 @@ Error response details for strict failures:
 - `vercel.json` configures Vercel build/output for this Vite app.
 - A deployable Vercel-style route is provided at `api/coach-hand.js`.
 - A deployable Vercel-style route is provided at `api/hand-normalize.js`.
+- A deployable Vercel-style route is provided at `api/feedback.js`.
 - Local dev and preview both expose `/api/coach-hand` through Vite middleware.
 - Local dev and preview both expose `/api/hand-normalize` through Vite middleware.
+- Local dev and preview both expose `/api/feedback` through Vite middleware.
 - Core coach logic lives in `server/coach/*` so route wrappers stay thin.
+- Feedback email delivery lives in `server/feedback/*`.
 
 ---
 

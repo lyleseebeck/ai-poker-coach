@@ -12,6 +12,7 @@ import { HandList } from './components/HandList.jsx';
 import { TrashList } from './components/TrashList.jsx';
 import { UnifiedHandForm } from './components/UnifiedHandForm.jsx';
 import { CoachPanel } from './components/CoachPanel.jsx';
+import { FeedbackForm } from './components/FeedbackForm.jsx';
 
 const HERO_SLOT_IDS = ['hero-card1', 'hero-card2'];
 const COMMUNITY_SLOT_IDS = ['import-flop1', 'import-flop2', 'import-flop3', 'import-turn', 'import-river'];
@@ -260,6 +261,8 @@ export function App() {
           onDeleteNow={handleDeleteNow}
         />
       </section>
+
+      <FeedbackForm />
     </div>
   );
 }
