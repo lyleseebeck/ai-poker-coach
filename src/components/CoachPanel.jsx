@@ -449,9 +449,20 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
 
           {(isSubmitting || coachDiagnostics.attempts.length > 0 || coachDiagnostics.finalResponse) && (
             <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3">
-              <p className="text-xs font-medium text-emerald-800">
-                {isSubmitting ? 'Coach request diagnostics' : 'Last coach request diagnostics'}
-              </p>
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-xs font-medium text-emerald-800">
+                  {isSubmitting ? 'Coach request diagnostics' : 'Last coach request diagnostics'}
+                </p>
+                {isSubmitting && (
+                  <button
+                    type="button"
+                    onClick={handleStopCoach}
+                    className="shrink-0 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-800 transition hover:bg-emerald-100"
+                  >
+                    Stop
+                  </button>
+                )}
+              </div>
               <div className="mt-1 space-y-1 text-xs text-emerald-700">
                 <PlannedOrderDisclosure
                   plannedOrder={coachDiagnostics.plannedOrder}
