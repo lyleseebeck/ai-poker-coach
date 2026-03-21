@@ -17,6 +17,8 @@ function makeInitialModelOutput(overrides = {}) {
           heroWasPreflopAggressor: false,
           heroCanCbetFlop: false,
           heroPostflopPosition: 'unknown',
+          heroMadeHandCategory: 'high_card',
+          heroPairingDetail: 'none',
         },
         overallVerdict: 'incorrect',
         overallReason: 'Preflop call is fine, but flop fold may be too tight.',
@@ -53,7 +55,7 @@ function makeFollowupModelOutput() {
   });
 }
 
-function makePayload(history = []) {
+function makePayload(history = [], overrides = {}) {
   return {
     handId: 'hand-123',
     hand: {
@@ -79,6 +81,8 @@ function makePayload(history = []) {
     },
     message: 'What should I do differently?',
     history,
+    includeDebug: false,
+    ...overrides,
   };
 }
 
@@ -141,6 +145,8 @@ test('coachHand derives overallVerdict from street verdicts and does not hard-fa
                 heroWasPreflopAggressor: false,
                 heroCanCbetFlop: false,
                 heroPostflopPosition: 'unknown',
+                heroMadeHandCategory: 'high_card',
+                heroPairingDetail: 'none',
               },
               overallVerdict: 'mixed',
               overallReason: 'Model said mixed.',
@@ -284,6 +290,8 @@ test('coachHand rejects model output that omits acted streets from street verdic
                 heroWasPreflopAggressor: false,
                 heroCanCbetFlop: false,
                 heroPostflopPosition: 'unknown',
+                heroMadeHandCategory: 'high_card',
+                heroPairingDetail: 'none',
               },
               overallVerdict: 'mixed',
               overallReason: 'Missing acted-street verdict.',
@@ -308,6 +316,141 @@ test('coachHand rejects model output that omits acted streets from street verdic
   await assert.rejects(
     () => coachHand(makePayload([]), { provider }),
     (error) => error?.code === 'COACH_MODEL_SCHEMA_INVALID' && Number(error?.statusCode) === 502
+  );
+});
+
+test('coachHand includes prompt/debug payloads when includeDebug is enabled', async () => {
+  const provider = {
+    name: 'openrouter',
+    async generate() {
+      return {
+        provider: 'openrouter',
+        model: 'provider/model:free',
+        fallbackUsed: false,
+        content: makeInitialModelOutput(),
+      };
+    },
+  };
+
+  const response = await coachHand(makePayload([], { includeDebug: true }), { provider });
+
+  assert.equal(response.meta.debug.submittedHand.id, 'hand-123');
+  assert.equal(response.meta.debug.handContext.factCheckGroundTruth.heroPairingDetail, 'none');
+  assert.equal(Array.isArray(response.meta.debug.messages), true);
+  assert.match(response.meta.debug.messages[1].content, /Hand context JSON:/i);
+});
+
+test('coachHand rejects model output when new hand-strength fact check mismatches ground truth', async () => {
+  const provider = {
+    name: 'openrouter',
+    async generate() {
+      return {
+        provider: 'openrouter',
+        model: 'provider/model:free',
+        fallbackUsed: false,
+        content: makeInitialModelOutput({
+          assistant: {
+            analysis: {
+              factCheck: {
+                heroCards: ['As', 'Kd'],
+                heroHandCode: 'AKo',
+                heroPosition: 'BTN',
+                preflopLastAggressorPosition: 'UNKNOWN',
+                heroWasPreflopAggressor: false,
+                heroCanCbetFlop: false,
+                heroPostflopPosition: 'unknown',
+                heroMadeHandCategory: 'pair',
+                heroPairingDetail: 'top_pair',
+              },
+              overallVerdict: 'incorrect',
+              overallReason: 'Bad read.',
+              streetVerdicts: [
+                {
+                  street: 'preflop',
+                  heroAction: 'Called open',
+                  verdict: 'correct',
+                  reason: 'Defend is acceptable.',
+                  gtoPreferredAction: 'Mostly call with this combo.',
+                },
+                {
+                  street: 'flop',
+                  heroAction: 'Folded',
+                  verdict: 'mixed',
+                  reason: 'Fold can be okay.',
+                  gtoPreferredAction: 'Continue more often versus smaller sizing.',
+                },
+              ],
+              keyAdjustments: ['Review flop texture.'],
+              confidence: 'medium',
+            },
+          },
+        }),
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => coachHand(makePayload([]), { provider }),
+    (error) =>
+      error?.code === 'COACH_FACT_CHECK_FAILED' &&
+      error?.details?.validationFailures?.some((item) => /heroMadeHandCategory mismatch/i.test(item))
+  );
+});
+
+test('coachHand rejects visible set language for a non-set hand', async () => {
+  const provider = {
+    name: 'openrouter',
+    async generate() {
+      return {
+        provider: 'openrouter',
+        model: 'provider/model:free',
+        fallbackUsed: false,
+        content: makeInitialModelOutput({
+          assistant: {
+            analysis: {
+              factCheck: {
+                heroCards: ['As', 'Kd'],
+                heroHandCode: 'AKo',
+                heroPosition: 'BTN',
+                preflopLastAggressorPosition: 'UNKNOWN',
+                heroWasPreflopAggressor: false,
+                heroCanCbetFlop: false,
+                heroPostflopPosition: 'unknown',
+                heroMadeHandCategory: 'high_card',
+                heroPairingDetail: 'none',
+              },
+              overallVerdict: 'incorrect',
+              overallReason: 'Flop fold is too tight because you have top set.',
+              streetVerdicts: [
+                {
+                  street: 'preflop',
+                  heroAction: 'Called open',
+                  verdict: 'correct',
+                  reason: 'Defend is acceptable.',
+                  gtoPreferredAction: 'Mostly call with this combo.',
+                },
+                {
+                  street: 'flop',
+                  heroAction: 'Folded',
+                  verdict: 'incorrect',
+                  reason: 'Folding top set burns too much value.',
+                  gtoPreferredAction: 'Continue immediately with your set.',
+                },
+              ],
+              keyAdjustments: ['Do not fold sets on dry boards.'],
+              confidence: 'medium',
+            },
+          },
+        }),
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => coachHand(makePayload([]), { provider }),
+    (error) =>
+      error?.code === 'COACH_CONSISTENCY_FAILED' &&
+      error?.details?.validationFailures?.some((item) => /set\/trips/i.test(item))
   );
 });
 

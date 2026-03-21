@@ -168,6 +168,8 @@ function validateFactCheckAgainstGroundTruth(validatedPayload, handContext) {
     ['heroWasPreflopAggressor', expected.heroWasPreflopAggressor, actual.heroWasPreflopAggressor],
     ['heroCanCbetFlop', expected.heroCanCbetFlop, actual.heroCanCbetFlop],
     ['heroPostflopPosition', expected.heroPostflopPosition, actual.heroPostflopPosition],
+    ['heroMadeHandCategory', expected.heroMadeHandCategory, actual.heroMadeHandCategory],
+    ['heroPairingDetail', expected.heroPairingDetail, actual.heroPairingDetail],
   ];
 
   for (const [label, expectedValue, actualValue] of checks) {
@@ -278,6 +280,7 @@ function buildCoachResponse({
   attemptLog,
   totalMs,
   providerMs,
+  debug,
 } = {}) {
   return {
     assistant: parsedPayload.assistant,
@@ -293,8 +296,30 @@ function buildCoachResponse({
       modelSelection: sanitizeModelSelection(generation?.selectionPlan, generation?.stopReason),
       timings: buildCoachTimings({ totalMs, providerMs }),
       responseMode,
+      ...(debug ? { debug } : {}),
     },
     warnings,
+  };
+}
+
+function sanitizeDebugMessages(messages) {
+  if (!Array.isArray(messages)) return [];
+  return messages
+    .map((item) => {
+      const role = typeof item?.role === 'string' ? item.role : '';
+      const content = typeof item?.content === 'string' ? item.content : '';
+      if (!role || !content) return null;
+      return { role, content };
+    })
+    .filter(Boolean);
+}
+
+function sanitizeDebugPayload(debug) {
+  if (!debug || typeof debug !== 'object') return null;
+  return {
+    submittedHand: debug.submittedHand || null,
+    handContext: debug.handContext || null,
+    messages: sanitizeDebugMessages(debug.messages),
   };
 }
 
@@ -416,6 +441,13 @@ async function executeCoachHand(payload, options = {}) {
   let attemptLog = [];
   let providerMs = 0;
   let firstPassStartedAtMs = 0;
+  let debugPayload = request.includeDebug
+    ? {
+        submittedHand: request.hand,
+        handContext,
+        messages: [],
+      }
+    : null;
 
   try {
     const firstPassMessages = buildCoachMessages({
@@ -425,6 +457,12 @@ async function executeCoachHand(payload, options = {}) {
       message: request.message,
       windowSize,
     });
+    if (debugPayload) {
+      debugPayload = {
+        ...debugPayload,
+        messages: firstPassMessages,
+      };
+    }
     firstPassStartedAtMs = Date.now();
     generation = await provider.generate({
       messages: firstPassMessages,
@@ -531,6 +569,7 @@ async function executeCoachHand(payload, options = {}) {
     attemptLog,
     totalMs: Date.now() - startedAtMs,
     providerMs,
+    debug: sanitizeDebugPayload(debugPayload),
   });
 }
 

@@ -1,4 +1,5 @@
 import { createCoachError } from './errors.js';
+import { MADE_HAND_CATEGORIES, PAIRING_DETAILS } from './handContext.js';
 
 export const HISTORY_WINDOW_SIZE = 8;
 export const MAX_MESSAGE_LENGTH = 2000;
@@ -7,8 +8,11 @@ export const MAX_HISTORY_ITEMS = 40;
 export const COACH_VERDICTS = ['correct', 'mixed', 'incorrect', 'unclear'];
 export const COACH_STREETS = ['preflop', 'flop', 'turn', 'river'];
 export const COACH_POSTFLOP_POSITION = ['out_of_position', 'in_position', 'unknown'];
+export const COACH_MADE_HAND_CATEGORIES = MADE_HAND_CATEGORIES;
+export const COACH_PAIRING_DETAILS = PAIRING_DETAILS;
 const CBET_PATTERN = /\bc[\s-]?bet\b|\bcontinuation[\s-]?bet\b/i;
 const POSITIONALLY_INCORRECT_PATTERN = /\bin[\s-]?position\b|\bcheck[\s-]?back\b/i;
+const SET_TRIPS_PATTERN = /\btop set\b|\bmiddle set\b|\bbottom set\b|\btrips\b|\bset\b(?!\s+up\b)/i;
 const NEGATION_PATTERN = /\b(cannot|can't|can not|not able|unable|do not|don't|out of position|oop)\b/i;
 const PERCENT_PATTERN = /\b\d+(\.\d+)?\s*%/;
 
@@ -85,6 +89,16 @@ function validateCardText(value, label, statusCode = 500) {
     });
   }
   return `${text[0].toUpperCase()}${text[1].toLowerCase()}`;
+}
+
+function requireBooleanRequestField(value, label) {
+  if (typeof value !== 'boolean') {
+    throw createCoachError(`${label} must be a boolean.`, {
+      statusCode: 400,
+      code: 'COACH_REQUEST_INVALID',
+    });
+  }
+  return value;
 }
 
 function normalizeRankValue(rank) {
@@ -198,11 +212,14 @@ export function validateCoachRequest(payload) {
     return { role, content };
   });
 
+  const includeDebug = payload.includeDebug == null ? false : requireBooleanRequestField(payload.includeDebug, 'includeDebug');
+
   return {
     handId,
     hand: payload.hand,
     message,
     history,
+    includeDebug,
   };
 }
 
@@ -312,6 +329,18 @@ function validateFactCheck(factCheckRaw) {
       factCheckRaw.heroPostflopPosition,
       'assistant.analysis.factCheck.heroPostflopPosition',
       COACH_POSTFLOP_POSITION,
+      502
+    ),
+    heroMadeHandCategory: requireEnumField(
+      factCheckRaw.heroMadeHandCategory,
+      'assistant.analysis.factCheck.heroMadeHandCategory',
+      COACH_MADE_HAND_CATEGORIES,
+      502
+    ),
+    heroPairingDetail: requireEnumField(
+      factCheckRaw.heroPairingDetail,
+      'assistant.analysis.factCheck.heroPairingDetail',
+      COACH_PAIRING_DETAILS,
       502
     ),
   };
@@ -455,6 +484,19 @@ export function validateInitialCoachModelPayload(payload) {
       code: 'COACH_CONSISTENCY_FAILED',
       details: {
         validationFailures: ['Output implied in-position play while hero is out of position.'],
+      },
+    });
+  }
+
+  const allowsSetTripsLanguage = ['top_set', 'middle_set', 'bottom_set', 'trips', 'full_house', 'quads'].includes(
+    factCheck.heroPairingDetail
+  );
+  if (!allowsSetTripsLanguage && allText.some((text) => isLikelyContradictoryRecommendation(text, SET_TRIPS_PATTERN))) {
+    throw createCoachError('Coach output conflicts with deterministic set/trips hand facts.', {
+      statusCode: 502,
+      code: 'COACH_CONSISTENCY_FAILED',
+      details: {
+        validationFailures: ['Output claimed set/trips language for a hand that is not set/trips/full house/quads.'],
       },
     });
   }

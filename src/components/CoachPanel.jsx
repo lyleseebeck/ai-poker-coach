@@ -88,6 +88,21 @@ function PlannedOrderDisclosure({ plannedOrder, strategy, tone = 'emerald' }) {
   );
 }
 
+function DebugJsonBlock({ label, value }) {
+  if (value == null) return null;
+  return (
+    <div className="space-y-1">
+      <p className="text-[11px] font-medium text-slate-700">{label}</p>
+      <textarea
+        readOnly
+        value={JSON.stringify(value, null, 2)}
+        rows={8}
+        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 font-mono text-[11px] text-slate-700 outline-none"
+      />
+    </div>
+  );
+}
+
 function AnalysisDetails({ analysis }) {
   return (
     <div className="mt-3 space-y-3 text-sm text-slate-700">
@@ -144,6 +159,7 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
   const [draftMessage, setDraftMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [includeDebug, setIncludeDebug] = useState(false);
   const [chatByHandId, setChatByHandId] = useState({});
   const [coachDiagnosticsByHandId, setCoachDiagnosticsByHandId] = useState({});
   const [coachDiagnosticsNowMs, setCoachDiagnosticsNowMs] = useState(() => Date.now());
@@ -225,6 +241,7 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
           hand: selectedHand,
           message,
           history,
+          includeDebug,
         },
         {
           signal: abortController.signal,
@@ -411,6 +428,19 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
                             </div>
                           </div>
                         )}
+                        {entry.meta.debug && (
+                          <details className="rounded-md border border-slate-200 bg-slate-50 px-2 py-2">
+                            <summary className="cursor-pointer text-[11px] font-medium text-slate-700">
+                              Debug payload
+                            </summary>
+                            <div className="mt-2 space-y-2">
+                              <DebugJsonBlock label="Submitted hand" value={entry.meta.debug.submittedHand} />
+                              <DebugJsonBlock label="Derived hand context" value={entry.meta.debug.handContext} />
+                              <DebugJsonBlock label="Outbound LLM messages" value={entry.meta.debug.messages} />
+                              <DebugJsonBlock label="Returned fact check" value={entry.analysis?.factCheck || null} />
+                            </div>
+                          </details>
+                        )}
                       </div>
                     )}
                   </div>
@@ -492,7 +522,18 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
             />
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-slate-500">{draftMessage.length}/2000</p>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 text-xs text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={includeDebug}
+                    onChange={(event) => setIncludeDebug(event.target.checked)}
+                    disabled={isSubmitting}
+                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  Include debug payload
+                </label>
+                <div className="flex items-center gap-2">
                 {isSubmitting && (
                   <button
                     type="button"
@@ -506,9 +547,10 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
                   type="submit"
                   disabled={isSubmitting || !selectedHand}
                   className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isSubmitting ? 'Coaching…' : 'Get coaching'}
-                </button>
+                  >
+                    {isSubmitting ? 'Coaching…' : 'Get coaching'}
+                  </button>
+                </div>
               </div>
             </div>
           </form>
