@@ -14,8 +14,10 @@ import {
 import {
   applyConflictResolution,
   applyParsedFieldsToSnapshot,
+  buildParsedFieldValueMap,
   buildNormalizeSnapshot,
   formatConflictValue,
+  preferConflictSource,
   unresolvedConflictCount,
 } from '../lib/normalizeMerge.js';
 import { CardPicker } from './CardPicker.jsx';
@@ -490,6 +492,16 @@ function summarizeAiProposal(proposal) {
   }
 
   return summary;
+}
+
+function conflictCurrentLabel(conflict) {
+  if (conflict?.currentSource === 'parser') return 'Parser';
+  return 'Current';
+}
+
+function conflictKeepLabel(conflict) {
+  if (conflict?.currentSource === 'parser') return 'Keep parser value';
+  return 'Keep mine';
 }
 
 function mergeParsedIntoState(current, parsed, fillOnlyMissing) {
@@ -1022,10 +1034,15 @@ export function UnifiedHandForm({
 
   const applyAiProposalWithConflicts = (proposal, options = {}) => {
     if (!proposal?.parsedFields) return { conflicts: [] };
-    const { conflicts } = applyParsedFieldsToForm(
+    const { conflicts: rawConflicts } = applyParsedFieldsToForm(
       proposal.parsedFields,
       true,
       options.baseSnapshot || null
+    );
+    const conflicts = preferConflictSource(
+      rawConflicts,
+      options.preferredValuesById || null,
+      options.preferredSource || 'parser'
     );
     setAiConflicts(conflicts);
     setAiStatus(unresolvedConflictCount(conflicts) > 0 ? 'conflicts' : 'applied');
@@ -1097,7 +1114,11 @@ export function UnifiedHandForm({
             ...(parseResult.merged || {}),
             heroPosition: parseResult.inferredHeroPosition || heroPosition,
           });
-          const applied = applyAiProposalWithConflicts(proposal, { baseSnapshot });
+          const applied = applyAiProposalWithConflicts(proposal, {
+            baseSnapshot,
+            preferredValuesById: buildParsedFieldValueMap(parseResult.parsed?.parsedFields),
+            preferredSource: 'parser',
+          });
           unresolved = unresolvedConflictCount(applied.conflicts);
         } else {
           setAiStatus('idle');
@@ -1524,7 +1545,11 @@ export function UnifiedHandForm({
           didReachFlop: effectiveDidReachFlop,
           didReachFlopFilled: true,
         });
-        const { conflicts } = applyAiProposalWithConflicts(proposal, { baseSnapshot });
+        const { conflicts } = applyAiProposalWithConflicts(proposal, {
+          baseSnapshot,
+          preferredValuesById: buildParsedFieldValueMap(manualParseResult.parsed?.parsedFields),
+          preferredSource: 'parser',
+        });
         unresolved = unresolvedConflictCount(conflicts);
         setParsePreview({
           overall: proposal.overallConfidence ?? parsePreview?.overall ?? 0,
@@ -1826,7 +1851,7 @@ export function UnifiedHandForm({
                       <div key={conflict.id} className="rounded-md border border-amber-200 bg-white px-2 py-2">
                         <p className="text-xs font-medium text-slate-700">{conflict.label}</p>
                         <p className="text-xs text-slate-600 mt-0.5">
-                          Current: {formatConflictValue(conflict.type, conflict.currentValue)}
+                          {conflictCurrentLabel(conflict)}: {formatConflictValue(conflict.type, conflict.currentValue)}
                         </p>
                         <p className="text-xs text-slate-600">
                           AI: {formatConflictValue(conflict.type, conflict.suggestedValue)}
@@ -1842,7 +1867,7 @@ export function UnifiedHandForm({
                                 : 'bg-slate-200 text-slate-700 hover:bg-slate-300')
                             }
                           >
-                            Keep mine
+                            {conflictKeepLabel(conflict)}
                           </button>
                           <button
                             type="button"
