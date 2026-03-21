@@ -3,6 +3,7 @@ const COUNTER_TTL_SECONDS = 120;
 
 export const DEFAULT_COACH_RATE_LIMIT_PER_MINUTE = 5;
 export const DEFAULT_NORMALIZE_RATE_LIMIT_PER_MINUTE = 12;
+export const DEFAULT_FEEDBACK_RATE_LIMIT_PER_MINUTE = 3;
 
 function createRateLimitError(message, code = 'RATE_LIMIT_CONFIG', details) {
   const error = new Error(message);
