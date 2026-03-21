@@ -1579,11 +1579,7 @@ export function UnifiedHandForm({
       Boolean(aiProposal);
 
     if (!validation.isValid && shouldTryAiFallback && !hasCurrentAiProposal) {
-      setFormErrors({
-        ...validation.errors,
-        aiReview:
-          'Parser data is incomplete. Fill the missing fields manually or click "Parser data incomplete? Let AI fill the rest".',
-      });
+      setFormErrors(validation.errors);
       return;
     }
 
