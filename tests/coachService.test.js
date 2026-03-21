@@ -81,7 +81,6 @@ function makePayload(history = [], overrides = {}) {
     },
     message: 'What should I do differently?',
     history,
-    includeDebug: false,
     ...overrides,
   };
 }
@@ -319,7 +318,7 @@ test('coachHand rejects model output that omits acted streets from street verdic
   );
 });
 
-test('coachHand includes prompt/debug payloads when includeDebug is enabled', async () => {
+test('coachHand always includes prompt/debug payloads', async () => {
   const provider = {
     name: 'openrouter',
     async generate() {
@@ -332,7 +331,7 @@ test('coachHand includes prompt/debug payloads when includeDebug is enabled', as
     },
   };
 
-  const response = await coachHand(makePayload([], { includeDebug: true }), { provider });
+  const response = await coachHand(makePayload([]), { provider });
 
   assert.equal(response.meta.debug.submittedHand.id, 'hand-123');
   assert.equal(response.meta.debug.handContext.factCheckGroundTruth.heroPairingDetail, 'none');

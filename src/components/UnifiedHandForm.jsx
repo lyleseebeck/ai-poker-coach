@@ -4,6 +4,7 @@ import { normalizeCard } from '../lib/cards.js';
 import { PLAYER_COUNTS, POSITIONS_BY_PLAYERS } from '../lib/positions.js';
 import { buildHandRecordV2, createEmptyHandDraft, validateHandDraft } from '../lib/handSchema.js';
 import { parseManualActionText } from '../lib/manualActionParser.js';
+import { filterSatisfiedManualMissingFields, shouldOfferManualAiAssist } from '../lib/manualParseFlow.js';
 import { parseIgnitionHandHistory } from '../lib/ignitionParser.js';
 import { streamNormalizeHandFromText } from '../lib/aiNormalizeStreamClient.js';
 import {
@@ -34,7 +35,6 @@ const ACTION_OPTIONS = [
   { value: 'all_in', label: 'All-in' },
 ];
 
-const AI_FALLBACK_CONFIDENCE_THRESHOLD = 0.75;
 const DEFAULT_PRE_FLOP_OPEN_BB = 2.5;
 const DEFAULT_PRE_FLOP_3BET_BB = 8;
 const STREET_DECISION_ROW_CLASS = 'grid gap-2 items-center md:grid-cols-[170px,minmax(0,1fr)]';
@@ -442,11 +442,8 @@ function manualTextSignature(value) {
   return String(value || '').trim();
 }
 
-function shouldRequestAiFallback(parsed) {
-  if (!parsed) return false;
-  const missing = Array.isArray(parsed.missingRequired) ? parsed.missingRequired.length : 0;
-  const overallConfidence = Number(parsed.confidence?.overall ?? 0);
-  return missing > 0 || overallConfidence < AI_FALLBACK_CONFIDENCE_THRESHOLD;
+function remainingManualMissingFields(parsed, snapshot) {
+  return filterSatisfiedManualMissingFields(parsed?.missingRequired, snapshot);
 }
 
 function summarizeAiProposal(proposal) {
@@ -676,6 +673,8 @@ export function UnifiedHandForm({
   const [aiProposal, setAiProposal] = useState(null);
   const [aiProposalSignature, setAiProposalSignature] = useState('');
   const [aiConflicts, setAiConflicts] = useState([]);
+  const [lastParsedManualResult, setLastParsedManualResult] = useState(null);
+  const [lastParsedManualSignature, setLastParsedManualSignature] = useState('');
   const [manualParseInFlight, setManualParseInFlight] = useState(false);
   const [parseDiagnostics, setParseDiagnostics] = useState(() => createNormalizeDiagnosticsState());
   const [parseDiagnosticsNowMs, setParseDiagnosticsNowMs] = useState(() => Date.now());
@@ -731,23 +730,36 @@ export function UnifiedHandForm({
   useEffect(() => {
     const signature = manualTextSignature(manualActionText);
     if (!signature) {
+      manualParseAbortRef.current?.abort();
+      setParsePreview(null);
       setAiStatus('idle');
       setAiError('');
       setAiProposal(null);
       setAiProposalSignature('');
       setAiConflicts([]);
+      setLastParsedManualResult(null);
+      setLastParsedManualSignature('');
+      setManualParseInFlight(false);
       setParseDiagnostics(createNormalizeDiagnosticsState());
       return;
     }
-    if (aiProposalSignature && aiProposalSignature !== signature) {
+    if (
+      (aiProposalSignature && aiProposalSignature !== signature) ||
+      (lastParsedManualSignature && lastParsedManualSignature !== signature)
+    ) {
+      manualParseAbortRef.current?.abort();
+      setParsePreview(null);
       setAiStatus('idle');
       setAiError('');
       setAiProposal(null);
       setAiProposalSignature('');
       setAiConflicts([]);
+      setLastParsedManualResult(null);
+      setLastParsedManualSignature('');
+      setManualParseInFlight(false);
       setParseDiagnostics(createNormalizeDiagnosticsState());
     }
-  }, [manualActionText, aiProposalSignature]);
+  }, [manualActionText, aiProposalSignature, lastParsedManualSignature]);
 
   useEffect(() => {
     if (!manualParseInFlight) return undefined;
@@ -922,16 +934,17 @@ export function UnifiedHandForm({
       netChips: nextSnapshot.netChips,
     };
     const inferredHeroPosition = nextSnapshot.heroPosition || '';
+    const remainingMissingRequired = remainingManualMissingFields(parsed, nextSnapshot);
 
     setParsePreview({
       overall: parsed.confidence?.overall ?? 0,
-      missingRequired: parsed.missingRequired || [],
+      missingRequired: remainingMissingRequired,
       message:
-        parsed.missingRequired?.length > 0
+        remainingMissingRequired.length > 0
           ? 'Parser found partial info. Missing required fields are listed below.'
           : 'Parser populated fields successfully.',
     });
-    return { parsed, merged, inferredHeroPosition };
+    return { parsed, merged, inferredHeroPosition, nextSnapshot, remainingMissingRequired };
   };
 
   const applyParsedFieldsToForm = (parsedFields, fillOnlyMissing = true, baseSnapshot = null) => {
@@ -1080,35 +1093,76 @@ export function UnifiedHandForm({
     if (!stillValid) setHeroPosition('');
   };
 
-  const handleParseManualText = async () => {
-    if (manualParseInFlight) return;
+  const handleParseManualText = () => {
     const parseStartedAtMs = Date.now();
     setParseDiagnostics(createNormalizeDiagnosticsState());
     setParseDiagnosticsNowMs(parseStartedAtMs);
     setParseDiagnostics((prev) =>
       reduceNormalizeDiagnostics(prev, { type: 'deterministic_started' }, { nowMs: parseStartedAtMs })
     );
+    const localParseStartedAtMs = Date.now();
+    const parseResult = runManualParser(true);
+    const localParseMs = Date.now() - localParseStartedAtMs;
+    setParseDiagnostics((prev) =>
+      reduceNormalizeDiagnostics(
+        prev,
+        { type: 'deterministic_completed', durationMs: localParseMs },
+        { nowMs: Date.now() }
+      )
+    );
+    setAiStatus('idle');
+    setAiError('');
+    setAiProposal(null);
+    setAiProposalSignature('');
+    setAiConflicts([]);
+    setManualParseInFlight(false);
+    setParseDiagnostics((prev) => ({
+      ...prev,
+      phase: 'complete',
+    }));
+    if (!parseResult?.parsed) {
+      setLastParsedManualResult(null);
+      setLastParsedManualSignature('');
+      return;
+    }
+    setLastParsedManualResult(parseResult);
+    setLastParsedManualSignature(manualTextSignature(manualActionText));
+  };
+
+  const handleRequestAiFill = async () => {
+    if (manualParseInFlight) return;
+
+    const currentSignature = manualTextSignature(manualActionText);
+    let parseResult =
+      currentSignature &&
+      lastParsedManualSignature === currentSignature &&
+      lastParsedManualResult
+        ? lastParsedManualResult
+        : null;
+
+    if (!parseResult) {
+      handleParseManualText();
+      parseResult =
+        currentSignature &&
+        lastParsedManualSignature === currentSignature &&
+        lastParsedManualResult
+          ? lastParsedManualResult
+          : runManualParser(true);
+      if (parseResult?.parsed) {
+        setLastParsedManualResult(parseResult);
+        setLastParsedManualSignature(currentSignature);
+      }
+    }
+
+    if (!parseResult?.parsed) return;
+
     setManualParseInFlight(true);
     try {
-      const localParseStartedAtMs = Date.now();
-      const parseResult = runManualParser(true);
-      const localParseMs = Date.now() - localParseStartedAtMs;
-      setParseDiagnostics((prev) =>
-        reduceNormalizeDiagnostics(
-          prev,
-          { type: 'deterministic_completed', durationMs: localParseMs },
-          { nowMs: Date.now() }
-        )
-      );
-      if (!parseResult?.parsed) return;
+      const proposal = await requestAiProposal(parseResult.parsed);
+      let unresolved = 0;
 
-      if (shouldRequestAiFallback(parseResult.parsed)) {
-        const proposal = await requestAiProposal(parseResult.parsed);
-        if (!proposal) return;
-
+      if (proposal) {
         const isModelMerged = proposal?.meta?.resultSource === 'model_merged';
-        let unresolved = 0;
-
         if (isModelMerged) {
           const baseSnapshot = buildSnapshot({
             ...(parseResult.merged || {}),
@@ -1133,23 +1187,12 @@ export function UnifiedHandForm({
           missingRequired: proposal.missingRequired || [],
           message:
             !isModelMerged
-              ? 'Deterministic parse applied. AI fallback did not produce a better result this time.'
+              ? 'Deterministic parse applied. AI did not produce a better result this time.'
               : unresolved > 0
               ? `AI auto-filled missing fields and found ${unresolved} conflicting field${unresolved === 1 ? '' : 's'} that require confirmation below.`
               : 'AI auto-filled missing fields. Review and edit any field before saving.',
         });
-        return;
       }
-
-      setAiStatus('idle');
-      setAiError('');
-      setAiProposal(null);
-      setAiProposalSignature('');
-      setAiConflicts([]);
-      setParseDiagnostics((prev) => ({
-        ...prev,
-        phase: 'complete',
-      }));
     } finally {
       setManualParseInFlight(false);
     }
@@ -1529,44 +1572,17 @@ export function UnifiedHandForm({
       !activeImport &&
       Boolean(currentManualSignature) &&
       Boolean(manualParseResult?.parsed) &&
-      shouldRequestAiFallback(manualParseResult.parsed);
+      shouldOfferManualAiAssist(manualParseResult);
     const hasCurrentAiProposal =
       Boolean(currentManualSignature) &&
       aiProposalSignature === currentManualSignature &&
       Boolean(aiProposal);
 
     if (!validation.isValid && shouldTryAiFallback && !hasCurrentAiProposal) {
-      const proposal = await requestAiProposal(manualParseResult.parsed);
-      let unresolved = 0;
-      if (proposal) {
-        const baseSnapshot = buildSnapshot({
-          ...mergedState,
-          heroPosition: effectiveHeroPosition,
-          didReachFlop: effectiveDidReachFlop,
-          didReachFlopFilled: true,
-        });
-        const { conflicts } = applyAiProposalWithConflicts(proposal, {
-          baseSnapshot,
-          preferredValuesById: buildParsedFieldValueMap(manualParseResult.parsed?.parsedFields),
-          preferredSource: 'parser',
-        });
-        unresolved = unresolvedConflictCount(conflicts);
-        setParsePreview({
-          overall: proposal.overallConfidence ?? parsePreview?.overall ?? 0,
-          missingRequired: proposal.missingRequired || [],
-          message:
-            unresolved > 0
-              ? `AI found ${unresolved} conflict${unresolved === 1 ? '' : 's'}. Resolve them below before saving.`
-              : 'AI auto-filled missing fields. Review and save again.',
-        });
-      }
       setFormErrors({
         ...validation.errors,
-        aiReview: proposal
-          ? unresolved > 0
-            ? 'AI conflicts were detected. Resolve them before saving.'
-            : 'AI suggestions were auto-applied to missing fields. Review and save again.'
-          : 'AI suggestions could not be loaded. Fill required fields manually and try saving again.',
+        aiReview:
+          'Parser data is incomplete. Fill the missing fields manually or click "Parser data incomplete? Let AI fill the rest".',
       });
       return;
     }
@@ -1643,6 +1659,27 @@ export function UnifiedHandForm({
     0,
     (parseDiagnostics.totalModels || parseDiagnostics.attempts.length) - completedAttemptCount
   );
+  const currentManualSignature = manualTextSignature(manualActionText);
+  const hasCurrentParsedManualResult =
+    Boolean(currentManualSignature) &&
+    lastParsedManualSignature === currentManualSignature &&
+    Boolean(lastParsedManualResult);
+  const hasCurrentAiProposal =
+    Boolean(currentManualSignature) &&
+    aiProposalSignature === currentManualSignature &&
+    Boolean(aiProposal);
+  const shouldShowAiFillButton =
+    hasCurrentParsedManualResult &&
+    shouldOfferManualAiAssist(lastParsedManualResult) &&
+    (!hasCurrentAiProposal || Boolean(aiError));
+  const showAiNormalizeDiagnostics =
+    manualParseInFlight ||
+    parseDiagnostics.attempts.length > 0 ||
+    Boolean(aiProposal) ||
+    Boolean(aiError) ||
+    aiStatus === 'provisional' ||
+    aiStatus === 'conflicts' ||
+    aiStatus === 'applied';
 
   return (
     <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-8">
@@ -1699,8 +1736,23 @@ export function UnifiedHandForm({
                       : 'bg-slate-200 text-slate-700 hover:bg-slate-300')
                   }
                 >
-                  {manualParseInFlight ? 'Parsing...' : 'Parse & preview text'}
+                  Parse & preview text
                 </button>
+                {shouldShowAiFillButton && (
+                  <button
+                    type="button"
+                    onClick={handleRequestAiFill}
+                    disabled={manualParseInFlight}
+                    className={
+                      'px-3 py-2 rounded-lg text-sm font-medium transition ' +
+                      (manualParseInFlight
+                        ? 'bg-emerald-100 text-emerald-400 cursor-not-allowed'
+                        : 'bg-emerald-600 text-white hover:bg-emerald-700')
+                    }
+                  >
+                    Parser data incomplete? Let AI fill the rest
+                  </button>
+                )}
                 {manualParseInFlight && (
                   <button
                     type="button"
@@ -1719,8 +1771,8 @@ export function UnifiedHandForm({
               {manualParseInFlight && (
                 <p className="text-xs text-slate-600 mt-1">
                   {parseDiagnostics.deterministicMs != null
-                    ? `Local parse complete in ${formatDurationMs(parseDiagnostics.deterministicMs)}. AI fallback is still running.`
-                    : 'Parsing your hand now.'}
+                    ? `Local parse complete in ${formatDurationMs(parseDiagnostics.deterministicMs)}. AI fill is still running.`
+                    : 'AI fill is running now.'}
                 </p>
               )}
               {parsePreview?.message && (
@@ -1733,7 +1785,7 @@ export function UnifiedHandForm({
               )}
               {aiStatus === 'loading' && (
                 <p className="text-xs text-emerald-700 mt-1">
-                  AI fallback running
+                  AI fill running
                   {parseDiagnostics.totalModels > 0
                     ? `: model ${Math.min(completedAttemptCount + 1, parseDiagnostics.totalModels)} of ${parseDiagnostics.totalModels}`
                     : '...'}
@@ -1748,7 +1800,7 @@ export function UnifiedHandForm({
               {aiError && (
                 <p className="text-xs text-red-600 mt-1">{aiError}</p>
               )}
-              {(parseDiagnostics.deterministicMs != null || parseDiagnostics.attempts.length > 0 || aiProposal) && (
+              {showAiNormalizeDiagnostics && (
                 <div
                   className={
                     'mt-2 rounded-lg border px-3 py-2 ' +
@@ -1780,7 +1832,7 @@ export function UnifiedHandForm({
                     )}
                     {parseDiagnostics.totalModels > 0 && manualParseInFlight && (
                       <p>
-                        AI fallback running: {completedAttemptCount} of {parseDiagnostics.totalModels} attempts finished.
+                        AI fill running: {completedAttemptCount} of {parseDiagnostics.totalModels} attempts finished.
                       </p>
                     )}
                     <PlannedOrderDisclosure

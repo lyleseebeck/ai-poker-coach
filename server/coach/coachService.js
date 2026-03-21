@@ -441,13 +441,11 @@ async function executeCoachHand(payload, options = {}) {
   let attemptLog = [];
   let providerMs = 0;
   let firstPassStartedAtMs = 0;
-  let debugPayload = request.includeDebug
-    ? {
-        submittedHand: request.hand,
-        handContext,
-        messages: [],
-      }
-    : null;
+  let debugPayload = {
+    submittedHand: request.hand,
+    handContext,
+    messages: [],
+  };
 
   try {
     const firstPassMessages = buildCoachMessages({
@@ -457,12 +455,10 @@ async function executeCoachHand(payload, options = {}) {
       message: request.message,
       windowSize,
     });
-    if (debugPayload) {
-      debugPayload = {
-        ...debugPayload,
-        messages: firstPassMessages,
-      };
-    }
+    debugPayload = {
+      ...debugPayload,
+      messages: firstPassMessages,
+    };
     firstPassStartedAtMs = Date.now();
     generation = await provider.generate({
       messages: firstPassMessages,

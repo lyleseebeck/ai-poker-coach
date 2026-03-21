@@ -159,7 +159,6 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
   const [draftMessage, setDraftMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [includeDebug, setIncludeDebug] = useState(false);
   const [chatByHandId, setChatByHandId] = useState({});
   const [coachDiagnosticsByHandId, setCoachDiagnosticsByHandId] = useState({});
   const [coachDiagnosticsNowMs, setCoachDiagnosticsNowMs] = useState(() => Date.now());
@@ -241,7 +240,6 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
           hand: selectedHand,
           message,
           history,
-          includeDebug,
         },
         {
           signal: abortController.signal,
@@ -522,18 +520,7 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
             />
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-slate-500">{draftMessage.length}/2000</p>
-              <div className="flex items-center gap-3">
-                <label className="flex items-center gap-2 text-xs text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={includeDebug}
-                    onChange={(event) => setIncludeDebug(event.target.checked)}
-                    disabled={isSubmitting}
-                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  Include debug payload
-                </label>
-                <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2">
                 {isSubmitting && (
                   <button
                     type="button"
@@ -547,10 +534,9 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
                   type="submit"
                   disabled={isSubmitting || !selectedHand}
                   className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
+                >
                     {isSubmitting ? 'Coaching…' : 'Get coaching'}
-                  </button>
-                </div>
+                </button>
               </div>
             </div>
           </form>

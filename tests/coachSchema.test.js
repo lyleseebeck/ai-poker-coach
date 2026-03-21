@@ -23,7 +23,6 @@ function makeValidRequest(overrides = {}) {
     },
     message: 'How can I improve this line?',
     history: [{ role: 'user', content: 'Earlier question' }],
-    includeDebug: true,
     ...overrides,
   };
 }
@@ -74,14 +73,6 @@ test('validateCoachRequest accepts a valid payload', () => {
   assert.equal(parsed.handId, 'hand-1');
   assert.equal(parsed.message, 'How can I improve this line?');
   assert.equal(parsed.history.length, 1);
-  assert.equal(parsed.includeDebug, true);
-});
-
-test('validateCoachRequest rejects non-boolean includeDebug', () => {
-  assert.throws(
-    () => validateCoachRequest(makeValidRequest({ includeDebug: 'yes' })),
-    /includeDebug must be a boolean/i
-  );
 });
 
 test('validateCoachRequest rejects empty message', () => {

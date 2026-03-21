@@ -91,16 +91,6 @@ function validateCardText(value, label, statusCode = 500) {
   return `${text[0].toUpperCase()}${text[1].toLowerCase()}`;
 }
 
-function requireBooleanRequestField(value, label) {
-  if (typeof value !== 'boolean') {
-    throw createCoachError(`${label} must be a boolean.`, {
-      statusCode: 400,
-      code: 'COACH_REQUEST_INVALID',
-    });
-  }
-  return value;
-}
-
 function normalizeRankValue(rank) {
   return '23456789TJQKA'.indexOf(rank);
 }
@@ -212,14 +202,11 @@ export function validateCoachRequest(payload) {
     return { role, content };
   });
 
-  const includeDebug = payload.includeDebug == null ? false : requireBooleanRequestField(payload.includeDebug, 'includeDebug');
-
   return {
     handId,
     hand: payload.hand,
     message,
     history,
-    includeDebug,
   };
 }
 

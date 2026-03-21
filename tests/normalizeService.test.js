@@ -148,6 +148,103 @@ test('normalizeHandFromText canonicalizes shorthand hand code and avoids board d
   assert.equal(cards[1][0], 'A');
 });
 
+test('normalizeHandFromText infers explicit hero cards from separated and compact text without model help', async () => {
+  const provider = {
+    name: 'openrouter',
+    async generate() {
+      throw new Error('should not be needed');
+    },
+  };
+
+  const separated = await normalizeHandFromText(
+    makePayload({
+      manualActionText: 'I had As/Kd on the button. preflop I raised, villain folded, won 2.5bb',
+      context: {
+        heroPosition: 'BTN',
+        boardCards: [],
+        didReachFlop: false,
+        stakes: { bb: 1, sb: 0.5 },
+        heroCards: ['', ''],
+        currentFields: {},
+      },
+    }),
+    { provider }
+  );
+
+  const compact = await normalizeHandFromText(
+    makePayload({
+      manualActionText: 'I looked down at AsKd in the cutoff. preflop I folded and lost 0bb',
+      context: {
+        heroPosition: 'CO',
+        boardCards: [],
+        didReachFlop: false,
+        stakes: { bb: 1, sb: 0.5 },
+        heroCards: ['', ''],
+        currentFields: {},
+      },
+    }),
+    { provider }
+  );
+
+  assert.deepEqual(separated.parsedFields.hero.cards, ['As', 'Kd']);
+  assert.equal(compact.parsedFields.hero.handCode, 'AKo');
+});
+
+test('normalizeHandFromText infers natural-language hand codes and avoids board-card duplicates', async () => {
+  const provider = {
+    name: 'openrouter',
+    async generate() {
+      throw new Error('should not be needed');
+    },
+  };
+
+  const response = await normalizeHandFromText(
+    makePayload({
+      manualActionText: 'Holding ace king suited on the button. flop As Td 2h. I bet flop, checked turn, won 8bb',
+      context: {
+        heroPosition: 'BTN',
+        boardCards: ['As', 'Td', '2h'],
+        didReachFlop: true,
+        stakes: { bb: 1, sb: 0.5 },
+        heroCards: ['', ''],
+        currentFields: {},
+      },
+    }),
+    { provider }
+  );
+
+  assert.equal(response.parsedFields.hero.handCode, 'AKs');
+  assert.equal(response.parsedFields.hero.cards.includes('As'), false);
+  assert.equal(response.parsedFields.hero.cards.length, 2);
+});
+
+test('normalizeHandFromText does not infer hero cards from board text alone', async () => {
+  const provider = {
+    name: 'openrouter',
+    async generate() {
+      throw new Error('should not be needed');
+    },
+  };
+
+  const response = await normalizeHandFromText(
+    makePayload({
+      manualActionText: 'Flop As Kd 2h. Turn 9c. I bet flop and folded turn, lost 12bb',
+      context: {
+        heroPosition: 'BTN',
+        boardCards: ['As', 'Kd', '2h', '9c'],
+        didReachFlop: true,
+        stakes: { bb: 1, sb: 0.5 },
+        heroCards: ['', ''],
+        currentFields: {},
+      },
+    }),
+    { provider }
+  );
+
+  assert.equal(Array.isArray(response.parsedFields.hero.cards), false);
+  assert.equal(response.missingRequired.includes('hero.cards'), true);
+});
+
 test('normalizeHandFromTextStream emits provisional result and keeps checking later attempts', async () => {
   const events = [];
   const provider = {
