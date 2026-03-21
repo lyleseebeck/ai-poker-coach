@@ -2,17 +2,42 @@ import { createCoachError } from '../errors.js';
 import { createModelRankingStore } from './modelRankingStore.js';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
 const DEFAULT_TIMEOUT_MS = 25000;
+const DEFAULT_DISCOVERY_TTL_MS = 60 * 60 * 1000;
+const OPENROUTER_FREE_ROUTER = 'openrouter/free';
 export const DEFAULT_OPENROUTER_FREE_MODEL_FALLBACKS = [
   'nvidia/nemotron-3-super-120b-a12b:free',
   'stepfun/step-3.5-flash:free',
   'arcee-ai/trinity-large-preview:free',
 ];
 
+let discoveredFreeModelCache = {
+  expiresAtMs: 0,
+  models: [],
+};
+
 function parseTimeoutMs(value, fallback = DEFAULT_TIMEOUT_MS) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return Math.min(Math.max(Math.round(n), 1000), 120000);
+}
+
+function parseDiscoveryTtlMs(value, fallback = DEFAULT_DISCOVERY_TTL_MS) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return Math.min(Math.max(Math.round(n), 0), 24 * 60 * 60 * 1000);
+}
+
+function shouldDiscoverDynamicFreeModels(value) {
+  const text = String(value == null ? '' : value).trim().toLowerCase();
+  if (!text) return true;
+  return !['0', 'false', 'no', 'off'].includes(text);
+}
+
+function isAllowedConfiguredModel(model) {
+  const text = String(model || '').trim();
+  return text === OPENROUTER_FREE_ROUTER || text.includes(':free');
 }
 
 function normalizeModelList(rawModels, fallbackModels = DEFAULT_OPENROUTER_FREE_MODEL_FALLBACKS) {
@@ -24,8 +49,8 @@ function normalizeModelList(rawModels, fallbackModels = DEFAULT_OPENROUTER_FREE_
         .filter(Boolean);
 
   for (const model of list) {
-    if (!model.includes(':free')) {
-      throw createCoachError(`Model must include ":free" for free-only policy: ${model}`, {
+    if (!isAllowedConfiguredModel(model)) {
+      throw createCoachError(`Model must be a free variant or openrouter/free: ${model}`, {
         statusCode: 500,
         code: 'COACH_CONFIG',
       });
@@ -37,8 +62,8 @@ function normalizeModelList(rawModels, fallbackModels = DEFAULT_OPENROUTER_FREE_
   for (const model of [...list, ...fallbackModels]) {
     const trimmed = String(model || '').trim();
     if (!trimmed) continue;
-    if (!trimmed.includes(':free')) {
-      throw createCoachError(`Model must include ":free" for free-only policy: ${trimmed}`, {
+    if (!isAllowedConfiguredModel(trimmed)) {
+      throw createCoachError(`Model must be a free variant or openrouter/free: ${trimmed}`, {
         statusCode: 500,
         code: 'COACH_CONFIG',
       });
@@ -119,6 +144,97 @@ function defaultNowMs() {
   return Date.now();
 }
 
+function supportsTextResponses(model) {
+  const outputModalities = Array.isArray(model?.architecture?.output_modalities)
+    ? model.architecture.output_modalities.map((item) => String(item || '').trim().toLowerCase())
+    : [];
+  if (outputModalities.length === 0) return true;
+  return outputModalities.includes('text');
+}
+
+function isFreeModelRecord(model) {
+  const id = String(model?.id || '').trim();
+  if (!id || !id.includes(':free')) return false;
+  return supportsTextResponses(model);
+}
+
+async function fetchDiscoveredFreeModels({
+  fetchImpl,
+  apiKey,
+  modelsEndpoint,
+  nowMs,
+  cacheTtlMs,
+} = {}) {
+  if (cacheTtlMs > 0 && discoveredFreeModelCache.expiresAtMs > nowMs && discoveredFreeModelCache.models.length > 0) {
+    return [...discoveredFreeModelCache.models];
+  }
+
+  const response = await fetchImpl(modelsEndpoint, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+    },
+  });
+  const payloadText = await response.text();
+  if (!response.ok) {
+    throw new Error(`OpenRouter models discovery failed (${response.status}): ${payloadText.slice(0, 300)}`);
+  }
+
+  let payloadJson;
+  try {
+    payloadJson = payloadText ? JSON.parse(payloadText) : null;
+  } catch {
+    throw new Error('OpenRouter models discovery returned invalid JSON.');
+  }
+
+  const models = Array.isArray(payloadJson?.data)
+    ? payloadJson.data
+        .filter(isFreeModelRecord)
+        .map((item) => String(item.id).trim())
+        .filter(Boolean)
+    : [];
+
+  discoveredFreeModelCache = {
+    expiresAtMs: nowMs + cacheTtlMs,
+    models,
+  };
+
+  return [...models];
+}
+
+async function resolveCandidateModels(config, fetchImpl, nowMs) {
+  const baseModels = [...config.models];
+  const seen = new Set(baseModels);
+  const discovered = [];
+
+  if (config.discoverFreeModels) {
+    try {
+      const dynamicModels = await fetchDiscoveredFreeModels({
+        fetchImpl,
+        apiKey: config.apiKey,
+        modelsEndpoint: config.modelsEndpoint,
+        nowMs,
+        cacheTtlMs: config.discoveryTtlMs,
+      });
+      for (const model of dynamicModels) {
+        if (seen.has(model)) continue;
+        seen.add(model);
+        discovered.push(model);
+      }
+    } catch {
+      // Discovery is best-effort. We keep the configured allowlist if the catalog is unavailable.
+    }
+  }
+
+  if (!seen.has(OPENROUTER_FREE_ROUTER)) {
+    seen.add(OPENROUTER_FREE_ROUTER);
+    discovered.push(OPENROUTER_FREE_ROUTER);
+  }
+
+  return [...baseModels, ...discovered];
+}
+
 function toSelectionPlan(selectionPlan, scope, fallbackModels) {
   return {
     scope: String(selectionPlan?.scope || scope || 'coach'),
@@ -146,8 +262,16 @@ export function resolveOpenRouterConfig(options = {}) {
     models,
     timeoutMs,
     endpoint: options.endpoint || OPENROUTER_URL,
+    modelsEndpoint: options.modelsEndpoint || env.COACH_OPENROUTER_MODELS_ENDPOINT || OPENROUTER_MODELS_URL,
     siteUrl: options.siteUrl || env.COACH_SITE_URL || '',
     appName: options.appName || env.COACH_APP_NAME || 'AI Poker Coach',
+    discoverFreeModels: shouldDiscoverDynamicFreeModels(
+      options.discoverFreeModels ?? env.COACH_OPENROUTER_DISCOVER_FREE_MODELS
+    ),
+    discoveryTtlMs: parseDiscoveryTtlMs(
+      options.discoveryTtlMs ?? env.COACH_OPENROUTER_DISCOVERY_TTL_MS,
+      DEFAULT_DISCOVERY_TTL_MS
+    ),
     env,
   };
 }
@@ -173,12 +297,13 @@ async function runOpenRouterAttempts({
   const attempts = [];
   const candidates = [];
   const resolvedTimeout = parseTimeoutMs(timeoutMs, config.timeoutMs);
+  const candidateModels = await resolveCandidateModels(config, fetchImpl, nowMs());
   const selectionPlan = toSelectionPlan(
-    await rankingStore.getSelectionPlan({ scope: requestKind, models: config.models }),
+    await rankingStore.getSelectionPlan({ scope: requestKind, models: candidateModels }),
     requestKind,
-    config.models
+    candidateModels
   );
-  const orderedModels = selectionPlan.plannedOrder.length > 0 ? selectionPlan.plannedOrder : [...config.models];
+  const orderedModels = selectionPlan.plannedOrder.length > 0 ? selectionPlan.plannedOrder : [...candidateModels];
 
   await emitAttempt(onAttempt, {
     phase: 'selection_plan',

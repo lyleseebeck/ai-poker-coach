@@ -37,6 +37,17 @@ function staticRankingStore(plannedOrder) {
   };
 }
 
+function makeModelsDiscoveryResponse(ids) {
+  return makeResponse(200, {
+    data: ids.map((id) => ({
+      id,
+      architecture: {
+        output_modalities: ['text'],
+      },
+    })),
+  });
+}
+
 test('openRouter provider falls back to next free model on retryable status', async () => {
   let callCount = 0;
   const fetchMock = async () => {
@@ -50,6 +61,7 @@ test('openRouter provider falls back to next free model on retryable status', as
   const provider = createOpenRouterProvider({
     apiKey: 'test-key',
     models: ['provider/model-a:free', 'provider/model-b:free'],
+    discoverFreeModels: false,
     modelRankingStore: staticRankingStore(['provider/model-a:free', 'provider/model-b:free']),
     fetchImpl: fetchMock,
   });
@@ -79,6 +91,7 @@ test('openRouter provider falls back when first model returns invalid output', a
   const provider = createOpenRouterProvider({
     apiKey: 'test-key',
     models: ['provider/model-a:free', 'provider/model-b:free'],
+    discoverFreeModels: false,
     modelRankingStore: staticRankingStore(['provider/model-a:free', 'provider/model-b:free']),
     fetchImpl: fetchMock,
   });
@@ -105,6 +118,7 @@ test('openRouter provider fails fast on auth error', async () => {
   const provider = createOpenRouterProvider({
     apiKey: 'test-key',
     models: ['provider/model-a:free', 'provider/model-b:free'],
+    discoverFreeModels: false,
     modelRankingStore: staticRankingStore(['provider/model-a:free', 'provider/model-b:free']),
     fetchImpl: fetchMock,
   });
@@ -126,9 +140,10 @@ test('openRouter provider rejects non-free model config', () => {
       createOpenRouterProvider({
         apiKey: 'test-key',
         models: ['provider/model-paid'],
+        discoverFreeModels: false,
         fetchImpl: async () => makeResponse(200, makeChoiceContent('ok')),
       }),
-    /:free/
+    /free variant|openrouter\/free/i
   );
 });
 
@@ -137,6 +152,7 @@ test('openRouter provider appends default free fallback models after configured 
   const provider = createOpenRouterProvider({
     apiKey: 'test-key',
     models: configured,
+    discoverFreeModels: false,
     fetchImpl: async () => makeResponse(200, makeChoiceContent('ok')),
   });
 
@@ -149,6 +165,7 @@ test('openRouter provider appends default free fallback models after configured 
 test('openRouter provider uses default free fallback models when COACH_OPENROUTER_MODELS is empty', () => {
   const provider = createOpenRouterProvider({
     apiKey: 'test-key',
+    discoverFreeModels: false,
     env: {
       OPENROUTER_API_KEY: 'test-key',
       COACH_OPENROUTER_MODELS: '',
@@ -165,6 +182,7 @@ test('openRouter provider uses ranked planned order and emits selection events',
   const provider = createOpenRouterProvider({
     apiKey: 'test-key',
     models: ['provider/model-a:free', 'provider/model-b:free'],
+    discoverFreeModels: false,
     modelRankingStore: {
       async getSelectionPlan() {
         return {
@@ -197,4 +215,72 @@ test('openRouter provider uses ranked planned order and emits selection events',
   assert.equal(out.selectionPlan.strategy, 'ranked');
   assert.deepEqual(seenModels, ['provider/model-b:free']);
   assert.deepEqual(seenPhases, ['selection_plan', 'attempt_started', 'attempt_completed']);
+});
+
+test('openRouter provider appends discovered free models and keeps trying them after configured failures', async () => {
+  const seenModels = [];
+  const provider = createOpenRouterProvider({
+    apiKey: 'test-key',
+    models: ['provider/model-a:free'],
+    discoverFreeModels: true,
+    discoveryTtlMs: 0,
+    modelRankingStore: staticRankingStore([
+      'provider/model-a:free',
+      'provider/model-b:free',
+      'openrouter/free',
+    ]),
+    fetchImpl: async (url, init = {}) => {
+      if (String(url).includes('/models')) {
+        return makeModelsDiscoveryResponse(['provider/model-b:free']);
+      }
+      const body = JSON.parse(init.body);
+      seenModels.push(body.model);
+      if (body.model === 'provider/model-a:free') {
+        return makeResponse(429, { error: { message: 'retry later' } });
+      }
+      return makeResponse(200, makeChoiceContent('{"ok":true}'));
+    },
+  });
+
+  const out = await provider.generate({
+    messages: [{ role: 'user', content: 'hello' }],
+    validateContent: (text) => {
+      JSON.parse(text);
+    },
+  });
+
+  assert.equal(out.model, 'provider/model-b:free');
+  assert.deepEqual(seenModels, ['provider/model-a:free', 'provider/model-b:free']);
+});
+
+test('openRouter provider falls back to openrouter/free when discovery is unavailable', async () => {
+  const seenModels = [];
+  const provider = createOpenRouterProvider({
+    apiKey: 'test-key',
+    models: ['provider/model-a:free'],
+    discoverFreeModels: true,
+    discoveryTtlMs: 0,
+    modelRankingStore: staticRankingStore(['provider/model-a:free', 'openrouter/free']),
+    fetchImpl: async (url, init = {}) => {
+      if (String(url).includes('/models')) {
+        throw new Error('catalog unavailable');
+      }
+      const body = JSON.parse(init.body);
+      seenModels.push(body.model);
+      if (body.model === 'provider/model-a:free') {
+        return makeResponse(503, { error: { message: 'upstream unavailable' } });
+      }
+      return makeResponse(200, makeChoiceContent('{"ok":true}'));
+    },
+  });
+
+  const out = await provider.generate({
+    messages: [{ role: 'user', content: 'hello' }],
+    validateContent: (text) => {
+      JSON.parse(text);
+    },
+  });
+
+  assert.equal(out.model, 'openrouter/free');
+  assert.deepEqual(seenModels, ['provider/model-a:free', 'openrouter/free']);
 });
