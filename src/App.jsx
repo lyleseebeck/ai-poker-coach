@@ -28,6 +28,7 @@ const SLOT_LABELS = {
 export function App() {
   const [hands, setHands] = useState(() => getHands());
   const [trashedHands, setTrashedHands] = useState(() => getTrashedHands());
+  const [coachSaveReminderDismissed, setCoachSaveReminderDismissed] = useState(false);
   const [heroCard1, setHeroCard1] = useState('');
   const [heroCard2, setHeroCard2] = useState('');
   const [noFlop, setNoFlop] = useState(false);
@@ -181,6 +182,16 @@ export function App() {
     setCardPickerError('');
   }, []);
 
+  const handleHandSaved = useCallback(() => {
+    setCoachSaveReminderDismissed(true);
+  }, []);
+
+  const handleDraftActivityChange = useCallback((hasDraftContent) => {
+    if (hasDraftContent) {
+      setCoachSaveReminderDismissed(false);
+    }
+  }, []);
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       <header className="mb-8">
@@ -202,6 +213,8 @@ export function App() {
       <UnifiedHandForm
         onHandsChange={refreshHands}
         onHandSelectionReset={resetHandSelection}
+        onHandSaved={handleHandSaved}
+        onDraftActivityChange={handleDraftActivityChange}
         heroCard1={heroCard1}
         heroCard2={heroCard2}
         setHeroCard1={setHeroCard1}
@@ -227,7 +240,7 @@ export function App() {
         clearCardBySlotId={clearCardBySlotId}
       />
 
-      <CoachPanel hands={hands} />
+      <CoachPanel hands={hands} showSaveReminder={!coachSaveReminderDismissed} />
 
       <div className="my-6 border-t border-slate-200" aria-hidden="true" />
 

@@ -92,7 +92,7 @@ function AnalysisDetails({ analysis }) {
   );
 }
 
-export function CoachPanel({ hands }) {
+export function CoachPanel({ hands, showSaveReminder = true }) {
   const sortedHands = useMemo(
     () => [...hands].sort((a, b) => (b?.createdAt || 0) - (a?.createdAt || 0)),
     [hands]
@@ -194,12 +194,14 @@ export function CoachPanel({ hands }) {
       <p className="text-sm text-slate-500 mb-4">
         Ask for GTO-focused coaching in plain language. Coach remembers only the last {HISTORY_WINDOW_SIZE} messages for context.
       </p>
-      <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-        <p className="text-sm font-medium text-amber-900">Coach only works on saved hands.</p>
-        <p className="mt-1 text-sm text-amber-800">
-          If you just entered or edited a hand above, click <span className="font-medium">Save Hand</span> first. The coach can only analyze hands that already exist in your saved hand list.
-        </p>
-      </div>
+      {showSaveReminder && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+          <p className="text-sm font-medium text-amber-900">Coach only works on saved hands.</p>
+          <p className="mt-1 text-sm text-amber-800">
+            If you just entered or edited a hand above, click <span className="font-medium">Save Hand</span> first. The coach can only analyze hands that already exist in your saved hand list.
+          </p>
+        </div>
+      )}
 
       {sortedHands.length === 0 ? (
         <p className="text-sm text-slate-400">Save at least one hand to start coaching.</p>

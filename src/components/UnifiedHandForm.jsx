@@ -576,6 +576,8 @@ function StreetDecisionRow({
 export function UnifiedHandForm({
   onHandsChange,
   onHandSelectionReset,
+  onHandSaved,
+  onDraftActivityChange,
   heroCard1,
   heroCard2,
   setHeroCard1,
@@ -660,6 +662,42 @@ export function UnifiedHandForm({
   const showTurn = !noFlop && boardCards.length >= 4;
   const showRiver = !noFlop && boardCards.length >= 5;
   const isImportMode = entryMode === 'ignition';
+  const hasDraftContent =
+    Boolean(normalizeCard(heroCard1)) ||
+    Boolean(normalizeCard(heroCard2)) ||
+    noFlop ||
+    boardCards.length > 0 ||
+    Boolean(heroPosition) ||
+    Boolean(sbSize) ||
+    Boolean(bbSize) ||
+    Boolean(heroStackDepthBb) ||
+    Boolean(villainStackDepthBb) ||
+    preflopAction !== 'none' ||
+    Boolean(preflopAmountBb) ||
+    Boolean(preflopStreetNetBb) ||
+    Boolean(preflopFacingAmountBb) ||
+    Boolean(preflopAmountChips) ||
+    flopAction !== 'none' ||
+    Boolean(flopAmountBb) ||
+    Boolean(flopStreetNetBb) ||
+    Boolean(flopFacingAmountBb) ||
+    Boolean(flopAmountChips) ||
+    turnAction !== 'none' ||
+    Boolean(turnAmountBb) ||
+    Boolean(turnStreetNetBb) ||
+    Boolean(turnFacingAmountBb) ||
+    Boolean(turnAmountChips) ||
+    riverAction !== 'none' ||
+    Boolean(riverAmountBb) ||
+    Boolean(riverStreetNetBb) ||
+    Boolean(riverFacingAmountBb) ||
+    Boolean(riverAmountChips) ||
+    Boolean(netBb) ||
+    Boolean(netChips) ||
+    Boolean(knownCardsText.trim()) ||
+    Boolean(manualActionText.trim()) ||
+    Boolean(notes.trim()) ||
+    Boolean(importRawText.trim());
 
   useEffect(() => {
     const signature = manualTextSignature(manualActionText);
@@ -695,6 +733,10 @@ export function UnifiedHandForm({
       setImportError('');
     }
   }, [isImportMode]);
+
+  useEffect(() => {
+    onDraftActivityChange?.(hasDraftContent);
+  }, [hasDraftContent, onDraftActivityChange]);
 
   const setFromMergedState = (next) => {
     setPreflopAction(next.preflopAction);
@@ -1517,6 +1559,7 @@ export function UnifiedHandForm({
       setAiConflicts([]);
       setManualParseInFlight(false);
       setParseDiagnostics(createNormalizeDiagnosticsState());
+      onHandSaved?.();
     } catch (error) {
       setFormErrors(error?.validation?.errors || { form: error.message || 'Unable to save hand.' });
     }
