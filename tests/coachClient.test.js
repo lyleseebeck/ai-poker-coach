@@ -15,6 +15,8 @@ function makeValidAnalysisResponse() {
           heroWasPreflopAggressor: false,
           heroCanCbetFlop: false,
           heroPostflopPosition: 'unknown',
+          heroMadeHandCategory: 'high_card',
+          heroPairingDetail: 'none',
         },
         overallVerdict: 'mixed',
         overallReason: 'Mixed line overall.',
@@ -38,6 +40,11 @@ function makeValidAnalysisResponse() {
       historyWindowUsed: 8,
       truncatedHistory: false,
       failedModelAttempts: [],
+      debug: {
+        submittedHand: { id: 'hand-1', schemaVersion: 2 },
+        handContext: { hero: { cards: ['As', 'Kd'] } },
+        messages: [{ role: 'system', content: 'sys' }],
+      },
       attemptSummary: 'none',
       responseMode: 'analysis',
     },
@@ -51,6 +58,8 @@ test('normalizeCoachResponse accepts analysis-mode response', () => {
   assert.equal(normalized.assistant.analysis.overallVerdict, 'mixed');
   assert.equal(normalized.assistant.analysis.streetVerdicts.length, 1);
   assert.equal(normalized.assistant.analysis.keyAdjustments.length, 2);
+  assert.equal(normalized.assistant.analysis.factCheck.heroPairingDetail, 'none');
+  assert.equal(normalized.meta.debug.messages.length, 1);
 });
 
 test('normalizeCoachResponse accepts followup-mode response without analysis', () => {

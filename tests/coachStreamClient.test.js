@@ -17,6 +17,8 @@ test('normalizeCoachStreamEvent normalizes final_result payloads', () => {
             heroWasPreflopAggressor: false,
             heroCanCbetFlop: false,
             heroPostflopPosition: 'unknown',
+            heroMadeHandCategory: 'high_card',
+            heroPairingDetail: 'none',
           },
           overallVerdict: 'mixed',
           overallReason: 'x',
@@ -76,15 +78,17 @@ test('streamCoachHand reads NDJSON events and returns final response', async () 
         assistant: {
           content: 'Coach answer',
           analysis: {
-            factCheck: {
-              heroCards: ['As', 'Kd'],
-              heroHandCode: 'AKo',
-              heroPosition: 'BTN',
-              preflopLastAggressorPosition: 'UNKNOWN',
-              heroWasPreflopAggressor: false,
-              heroCanCbetFlop: false,
-              heroPostflopPosition: 'unknown',
-            },
+          factCheck: {
+            heroCards: ['As', 'Kd'],
+            heroHandCode: 'AKo',
+            heroPosition: 'BTN',
+            preflopLastAggressorPosition: 'UNKNOWN',
+            heroWasPreflopAggressor: false,
+            heroCanCbetFlop: false,
+            heroPostflopPosition: 'unknown',
+            heroMadeHandCategory: 'high_card',
+            heroPairingDetail: 'none',
+          },
             overallVerdict: 'mixed',
             overallReason: 'x',
             streetVerdicts: [

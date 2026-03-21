@@ -102,6 +102,22 @@ export function extractErrorMessage(status, statusText, payloadText) {
 
 const VERDICTS = ['correct', 'mixed', 'incorrect', 'unclear'];
 const STREETS = ['preflop', 'flop', 'turn', 'river'];
+const MADE_HAND_CATEGORIES = ['high_card', 'pair', 'two_pair', 'trips', 'straight', 'flush', 'full_house', 'quads', 'straight_flush'];
+const PAIRING_DETAILS = [
+  'none',
+  'overpair',
+  'top_pair',
+  'middle_pair',
+  'bottom_pair',
+  'underpair',
+  'top_set',
+  'middle_set',
+  'bottom_set',
+  'trips',
+  'two_pair',
+  'full_house',
+  'quads',
+];
 
 function normalizeFailedModelAttempts(value, label) {
   if (value == null) return [];
@@ -155,6 +171,30 @@ function normalizeModelSelection(value) {
     strategy: selection.strategy ? String(selection.strategy) : null,
     plannedOrder: Array.isArray(selection.plannedOrder) ? selection.plannedOrder.map((item) => String(item)) : [],
     stopReason: selection.stopReason ? String(selection.stopReason) : null,
+  };
+}
+
+function normalizeDebugMessages(value, label) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array.`);
+  }
+  return value.map((item, index) => {
+    const entry = ensureObject(item, `${label}[${index}]`);
+    return {
+      role: ensureString(entry.role, `${label}[${index}].role`),
+      content: ensureString(entry.content, `${label}[${index}].content`),
+    };
+  });
+}
+
+function normalizeCoachDebug(value) {
+  if (value == null) return null;
+  const debug = ensureObject(value, 'meta.debug');
+  return {
+    submittedHand: debug.submittedHand != null ? debug.submittedHand : null,
+    handContext: debug.handContext != null ? debug.handContext : null,
+    messages: normalizeDebugMessages(debug.messages, 'meta.debug.messages'),
   };
 }
 
@@ -229,6 +269,16 @@ export function normalizeCoachResponse(raw) {
           'assistant.analysis.factCheck.heroPostflopPosition',
           ['out_of_position', 'in_position', 'unknown']
         ),
+        heroMadeHandCategory: ensureEnum(
+          factCheck.heroMadeHandCategory,
+          'assistant.analysis.factCheck.heroMadeHandCategory',
+          MADE_HAND_CATEGORIES
+        ),
+        heroPairingDetail: ensureEnum(
+          factCheck.heroPairingDetail,
+          'assistant.analysis.factCheck.heroPairingDetail',
+          PAIRING_DETAILS
+        ),
       },
       overallVerdict,
       overallReason: ensureString(analysis.overallReason, 'assistant.analysis.overallReason'),
@@ -256,6 +306,7 @@ export function normalizeCoachResponse(raw) {
               providerMs: Number.isFinite(Number(meta.timings.providerMs)) ? Number(meta.timings.providerMs) : null,
             }
           : null,
+      debug: normalizeCoachDebug(meta.debug),
       attemptSummary: ensureString(String(meta.attemptSummary || 'none'), 'meta.attemptSummary'),
       responseMode: inferredResponseMode,
     },

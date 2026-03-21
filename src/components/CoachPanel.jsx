@@ -88,6 +88,21 @@ function PlannedOrderDisclosure({ plannedOrder, strategy, tone = 'emerald' }) {
   );
 }
 
+function DebugJsonBlock({ label, value }) {
+  if (value == null) return null;
+  return (
+    <div className="space-y-1">
+      <p className="text-[11px] font-medium text-slate-700">{label}</p>
+      <textarea
+        readOnly
+        value={JSON.stringify(value, null, 2)}
+        rows={8}
+        className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 font-mono text-[11px] text-slate-700 outline-none"
+      />
+    </div>
+  );
+}
+
 function AnalysisDetails({ analysis }) {
   return (
     <div className="mt-3 space-y-3 text-sm text-slate-700">
@@ -411,6 +426,19 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
                             </div>
                           </div>
                         )}
+                        {entry.meta.debug && (
+                          <details className="rounded-md border border-slate-200 bg-slate-50 px-2 py-2">
+                            <summary className="cursor-pointer text-[11px] font-medium text-slate-700">
+                              Debug payload
+                            </summary>
+                            <div className="mt-2 space-y-2">
+                              <DebugJsonBlock label="Submitted hand" value={entry.meta.debug.submittedHand} />
+                              <DebugJsonBlock label="Derived hand context" value={entry.meta.debug.handContext} />
+                              <DebugJsonBlock label="Outbound LLM messages" value={entry.meta.debug.messages} />
+                              <DebugJsonBlock label="Returned fact check" value={entry.analysis?.factCheck || null} />
+                            </div>
+                          </details>
+                        )}
                       </div>
                     )}
                   </div>
@@ -507,7 +535,7 @@ export function CoachPanel({ hands, showSaveReminder = true }) {
                   disabled={isSubmitting || !selectedHand}
                   className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {isSubmitting ? 'Coaching…' : 'Get coaching'}
+                    {isSubmitting ? 'Coaching…' : 'Get coaching'}
                 </button>
               </div>
             </div>

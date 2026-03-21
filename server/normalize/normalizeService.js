@@ -1,5 +1,6 @@
 import { parseManualActionText } from '../../src/lib/manualActionParser.js';
 import { normalizeCard } from '../../src/lib/cards.js';
+import { deriveHandCodeFromCards, inferHeroHandFromText } from '../../src/lib/heroCardInference.js';
 import { getLlmProvider } from '../coach/providers/index.js';
 import {
   normalizeHandCodeText,
@@ -10,8 +11,6 @@ import {
 import { buildNormalizeMessages } from './normalizePrompt.js';
 
 const DEFAULT_TIMEOUT_MS = 25000;
-const RANK_ORDER = '23456789TJQKA';
-const SUIT_ORDER = ['s', 'h', 'd', 'c'];
 
 function toNumberOrNull(value) {
   if (value == null || value === '') return null;
@@ -153,133 +152,16 @@ function buildDeterministicBaseline(request) {
   };
 }
 
-function normalizeRankOrder(rankA, rankB) {
-  return RANK_ORDER.indexOf(rankA) >= RANK_ORDER.indexOf(rankB)
-    ? [rankA, rankB]
-    : [rankB, rankA];
-}
-
-function deriveHandCodeFromCards(cards) {
-  if (!Array.isArray(cards) || cards.length !== 2) return null;
-  const a = normalizeCard(cards[0]);
-  const b = normalizeCard(cards[1]);
-  if (!a || !b) return null;
-  const rankA = a[0].toUpperCase();
-  const rankB = b[0].toUpperCase();
-  const suitA = a[1].toLowerCase();
-  const suitB = b[1].toLowerCase();
-
-  if (rankA === rankB) return `${rankA}${rankB}`;
-  const [hi, lo] = normalizeRankOrder(rankA, rankB);
-  return `${hi}${lo}${suitA === suitB ? 's' : 'o'}`;
-}
-
-function parseExplicitHeroCardsFromText(text) {
-  const matches = [...String(text || '').matchAll(/\b([2-9TJQKA][shdc])\b/gi)];
-  if (matches.length < 2) return [];
-
-  const unique = [];
-  for (const match of matches) {
-    const card = normalizeCard(match[1]);
-    if (!card) continue;
-    if (!unique.includes(card)) unique.push(card);
-    if (unique.length === 2) break;
-  }
-
-  return unique.length === 2 ? unique : [];
-}
-
-function detectHandCodeFromText(text) {
-  const lower = String(text || '').toLowerCase();
-  const prioritized = lower.match(/(?:\bi\s+had\b|\bi\s+have\b|\bholding\b|\bwith\b)\s+([2-9tjqka]{2}(?:s|o)?)/i);
-  if (prioritized?.[1]) {
-    return normalizeHandCodeText(prioritized[1]);
-  }
-
-  const generic = [...lower.matchAll(/\b([2-9tjqka]{2}(?:s|o)?)\b/g)];
-  for (const item of generic) {
-    const candidate = String(item?.[1] || '').toUpperCase();
-    if (!candidate) continue;
-    if (!/^[2-9TJQKA]{2}(?:[SO])?$/.test(candidate)) continue;
-    const rankA = candidate[0];
-    const rankB = candidate[1];
-    if (!RANK_ORDER.includes(rankA) || !RANK_ORDER.includes(rankB)) continue;
-    return normalizeHandCodeText(candidate);
-  }
-
-  return null;
-}
-
 function buildBlockedCardSet(context, parsedBoardCards = []) {
   const blocked = new Set();
   const boardCards = Array.isArray(context?.boardCards) ? context.boardCards : [];
-  const heroCards = Array.isArray(context?.heroCards) ? context.heroCards : [];
 
-  for (const card of [...boardCards, ...parsedBoardCards, ...heroCards]) {
+  for (const card of [...boardCards, ...parsedBoardCards]) {
     const normalized = normalizeCard(card);
     if (normalized) blocked.add(normalized);
   }
 
   return blocked;
-}
-
-function pickPairCards(rank, blocked) {
-  for (let i = 0; i < SUIT_ORDER.length; i += 1) {
-    for (let j = i + 1; j < SUIT_ORDER.length; j += 1) {
-      const a = normalizeCard(`${rank}${SUIT_ORDER[i]}`);
-      const b = normalizeCard(`${rank}${SUIT_ORDER[j]}`);
-      if (!a || !b) continue;
-      if (blocked.has(a) || blocked.has(b)) continue;
-      return [a, b];
-    }
-  }
-  return [];
-}
-
-function pickSuitedCards(rankA, rankB, blocked) {
-  for (const suit of SUIT_ORDER) {
-    const a = normalizeCard(`${rankA}${suit}`);
-    const b = normalizeCard(`${rankB}${suit}`);
-    if (!a || !b || a === b) continue;
-    if (blocked.has(a) || blocked.has(b)) continue;
-    return [a, b];
-  }
-  return [];
-}
-
-function pickOffsuitCards(rankA, rankB, blocked) {
-  for (const suitA of SUIT_ORDER) {
-    for (const suitB of SUIT_ORDER) {
-      if (suitA === suitB) continue;
-      const a = normalizeCard(`${rankA}${suitA}`);
-      const b = normalizeCard(`${rankB}${suitB}`);
-      if (!a || !b || a === b) continue;
-      if (blocked.has(a) || blocked.has(b)) continue;
-      return [a, b];
-    }
-  }
-  return [];
-}
-
-function canonicalCardsFromHandCode(handCode, blockedCards) {
-  const normalizedCode = normalizeHandCodeText(handCode);
-  if (!normalizedCode) return [];
-
-  const match = normalizedCode.match(/^([2-9TJQKA])([2-9TJQKA])([so])?$/i);
-  if (!match) return [];
-
-  const rankA = match[1].toUpperCase();
-  const rankB = match[2].toUpperCase();
-  const suitedness = (match[3] || '').toLowerCase();
-  const blocked = new Set(blockedCards || []);
-
-  if (rankA === rankB) return pickPairCards(rankA, blocked);
-  if (suitedness === 's') return pickSuitedCards(rankA, rankB, blocked);
-  if (suitedness === 'o') return pickOffsuitCards(rankA, rankB, blocked);
-
-  return pickOffsuitCards(rankA, rankB, blocked).length > 0
-    ? pickOffsuitCards(rankA, rankB, blocked)
-    : pickSuitedCards(rankA, rankB, blocked);
 }
 
 function sanitizeHeroCards(cards, blocked) {
@@ -295,20 +177,25 @@ function ensureHeroCardInference(parsedFields, manualActionText, context, missin
   const blocked = buildBlockedCardSet(context, parsedFields?.board?.cards || []);
 
   let cards = sanitizeHeroCards(parsedFields.hero.cards, blocked);
-  if (cards.length !== 2) {
-    cards = sanitizeHeroCards(parseExplicitHeroCardsFromText(manualActionText), blocked);
-  }
+  const inferredHeroHand = cards.length === 2
+    ? {
+        cards,
+        handCode: deriveHandCodeFromCards(cards),
+      }
+    : inferHeroHandFromText(manualActionText, {
+        blockedCards: [...blocked],
+      });
 
   let handCode = normalizeHandCodeText(parsedFields.hero.handCode);
   if (!handCode && cards.length === 2) {
     handCode = deriveHandCodeFromCards(cards);
   }
-  if (!handCode) {
-    handCode = detectHandCodeFromText(manualActionText);
+  if (!handCode && inferredHeroHand.handCode) {
+    handCode = normalizeHandCodeText(inferredHeroHand.handCode);
   }
 
-  if (cards.length !== 2 && handCode) {
-    cards = canonicalCardsFromHandCode(handCode, blocked);
+  if (cards.length !== 2 && Array.isArray(inferredHeroHand.cards) && inferredHeroHand.cards.length === 2) {
+    cards = sanitizeHeroCards(inferredHeroHand.cards, blocked);
   }
 
   if (cards.length === 2) {

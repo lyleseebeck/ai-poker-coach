@@ -40,6 +40,8 @@ function makeValidInitialPayload() {
           heroWasPreflopAggressor: false,
           heroCanCbetFlop: false,
           heroPostflopPosition: 'out_of_position',
+          heroMadeHandCategory: 'high_card',
+          heroPairingDetail: 'none',
         },
         overallVerdict: 'incorrect',
         overallReason: 'Preflop and turn were fine, flop needed more aggression.',
@@ -203,6 +205,18 @@ test('validateInitialCoachModelPayload rejects suitedness mismatch inside fact c
   invalid.assistant.analysis.factCheck.heroCards = ['5d', '4d'];
   invalid.assistant.analysis.factCheck.heroHandCode = '54o';
   assert.throws(() => validateInitialCoachModelPayload(invalid), /heroHandCode must match heroCards/i);
+});
+
+test('validateInitialCoachModelPayload rejects invalid pairing detail', () => {
+  const invalid = makeValidInitialPayload();
+  invalid.assistant.analysis.factCheck.heroPairingDetail = 'pocket_pair';
+  assert.throws(() => validateInitialCoachModelPayload(invalid), /heroPairingDetail must be one of/i);
+});
+
+test('validateInitialCoachModelPayload rejects set language when deterministic facts say no set/trips', () => {
+  const invalid = makeValidInitialPayload();
+  invalid.assistant.analysis.overallReason = 'Flop check misses value because you have top set.';
+  assert.throws(() => validateInitialCoachModelPayload(invalid), /set\/trips hand facts/i);
 });
 
 test('validateInitialCoachModelPayload rejects illegal c-bet guidance when hero cannot c-bet flop', () => {

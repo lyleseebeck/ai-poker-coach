@@ -2,6 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildCanonicalHandCode, buildHandContext } from '../server/coach/handContext.js';
 
+function makeContext({ heroCards, boardCards, didReachFlop = true } = {}) {
+  return buildHandContext({
+    id: 'hand-1',
+    source: { mode: 'manual' },
+    hero: { cards: heroCards, position: 'BTN' },
+    table: { numPlayers: 6, stakes: { sb: 0.5, bb: 1 } },
+    board: { didReachFlop, cards: boardCards || [] },
+    heroStreetSummary: {
+      preflop: { action: 'call' },
+      flop: didReachFlop ? { action: 'check' } : null,
+      turn: null,
+      river: null,
+    },
+    timeline: { actions: [] },
+  });
+}
+
 test('buildCanonicalHandCode derives suited, offsuit, and pair formats', () => {
   assert.equal(buildCanonicalHandCode(['5d', '4d']), '54s');
   assert.equal(buildCanonicalHandCode(['Jh', 'Ac']), 'AJo');
@@ -62,4 +79,74 @@ test('buildHandContext marks hero as c-bet eligible when hero was last preflop a
   assert.equal(context.factCheckGroundTruth.preflopLastAggressorPosition, 'BTN');
   assert.equal(context.factCheckGroundTruth.heroWasPreflopAggressor, true);
   assert.equal(context.factCheckGroundTruth.heroCanCbetFlop, true);
+});
+
+test('buildHandContext derives no-pair facts', () => {
+  const context = makeContext({
+    heroCards: ['As', 'Kd'],
+    boardCards: ['2c', '7d', 'Jh'],
+  });
+
+  assert.equal(context.heroHandFacts.heroMadeHandCategory, 'high_card');
+  assert.equal(context.heroHandFacts.heroPairingDetail, 'none');
+});
+
+test('buildHandContext derives overpair facts', () => {
+  const context = makeContext({
+    heroCards: ['Qs', 'Qd'],
+    boardCards: ['2c', '7d', 'Jh'],
+  });
+
+  assert.equal(context.heroHandFacts.heroMadeHandCategory, 'pair');
+  assert.equal(context.heroHandFacts.heroPairingDetail, 'overpair');
+});
+
+test('buildHandContext derives top-pair facts', () => {
+  const context = makeContext({
+    heroCards: ['As', 'Kd'],
+    boardCards: ['Kh', '7d', '2c'],
+  });
+
+  assert.equal(context.heroHandFacts.heroMadeHandCategory, 'pair');
+  assert.equal(context.heroHandFacts.heroPairingDetail, 'top_pair');
+});
+
+test('buildHandContext derives middle-pair facts', () => {
+  const context = makeContext({
+    heroCards: ['As', '7d'],
+    boardCards: ['Kh', '7c', '2c'],
+  });
+
+  assert.equal(context.heroHandFacts.heroMadeHandCategory, 'pair');
+  assert.equal(context.heroHandFacts.heroPairingDetail, 'middle_pair');
+});
+
+test('buildHandContext derives top-set facts', () => {
+  const context = makeContext({
+    heroCards: ['Ks', 'Kd'],
+    boardCards: ['Kh', '7d', '2c'],
+  });
+
+  assert.equal(context.heroHandFacts.heroMadeHandCategory, 'trips');
+  assert.equal(context.heroHandFacts.heroPairingDetail, 'top_set');
+});
+
+test('buildHandContext derives middle-set facts', () => {
+  const context = makeContext({
+    heroCards: ['7s', '7h'],
+    boardCards: ['Kh', '7d', '2c'],
+  });
+
+  assert.equal(context.heroHandFacts.heroMadeHandCategory, 'trips');
+  assert.equal(context.heroHandFacts.heroPairingDetail, 'middle_set');
+});
+
+test('buildHandContext derives trips on paired board facts', () => {
+  const context = makeContext({
+    heroCards: ['As', '7h'],
+    boardCards: ['Kh', '7d', '7c'],
+  });
+
+  assert.equal(context.heroHandFacts.heroMadeHandCategory, 'trips');
+  assert.equal(context.heroHandFacts.heroPairingDetail, 'trips');
 });

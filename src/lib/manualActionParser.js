@@ -1,4 +1,5 @@
 import { ACTION_TYPES } from './handSchema.js';
+import { inferHeroHandFromText } from './heroCardInference.js';
 
 const ACTION_DEFS = [
   { action: 'all_in', patterns: [/\ball[\s-]?in\b/i, /\bjam(?:med|ming)?\b/i, /\bshove(?:d|s)?\b/i] },
@@ -733,6 +734,16 @@ export function parseManualActionText(rawText, options = {}) {
     ...inferredBoardCards.turn.slice(0, 1),
     ...inferredBoardCards.river.slice(0, 1),
   ].filter(Boolean);
+  const inferredHeroHand = inferHeroHandFromText(text, {
+    blockedCards: boardCards,
+  });
+
+  if (Array.isArray(inferredHeroHand.cards) && inferredHeroHand.cards.length === 2) {
+    byField.heroCards = toClampedConfidence(inferredHeroHand.confidence);
+  }
+  if (inferredHeroHand.handCode) {
+    byField.heroHandCode = toClampedConfidence(inferredHeroHand.confidence);
+  }
 
   for (const street of ['preflop', 'flop', 'turn', 'river']) {
     const value = actionsByStreet[street];
@@ -778,6 +789,16 @@ export function parseManualActionText(rawText, options = {}) {
     }
   }
 
+  if (!Array.isArray(inferredHeroHand.cards) || inferredHeroHand.cards.length !== 2) {
+    missingRequired.push('hero.cards');
+  } else if (inferredHeroHand.evidence) {
+    evidenceSnippets['hero.cards'] = inferredHeroHand.evidence;
+  }
+
+  if (inferredHeroHand.handCode && inferredHeroHand.evidence) {
+    evidenceSnippets['hero.handCode'] = inferredHeroHand.evidence;
+  }
+
   if (signedNetBb == null) {
     missingRequired.push('result.netBb');
   } else {
@@ -808,6 +829,10 @@ export function parseManualActionText(rawText, options = {}) {
       manualActionText: text || null,
       hero: {
         position: heroPosition || null,
+        ...(Array.isArray(inferredHeroHand.cards) && inferredHeroHand.cards.length === 2
+          ? { cards: inferredHeroHand.cards }
+          : {}),
+        ...(inferredHeroHand.handCode ? { handCode: inferredHeroHand.handCode } : {}),
       },
       board: {
         didReachFlop: didReach.value,

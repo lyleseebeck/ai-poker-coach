@@ -5,6 +5,32 @@ function numberOrNull(value) {
 }
 
 const CARD_RANK_ORDER = '23456789TJQKA';
+const MADE_HAND_CATEGORIES = [
+  'high_card',
+  'pair',
+  'two_pair',
+  'trips',
+  'straight',
+  'flush',
+  'full_house',
+  'quads',
+  'straight_flush',
+];
+const PAIRING_DETAILS = [
+  'none',
+  'overpair',
+  'top_pair',
+  'middle_pair',
+  'bottom_pair',
+  'underpair',
+  'top_set',
+  'middle_set',
+  'bottom_set',
+  'trips',
+  'two_pair',
+  'full_house',
+  'quads',
+];
 
 function normalizeCardText(card) {
   const text = String(card || '').trim();
@@ -19,6 +45,152 @@ function normalizeCardText(card) {
 function rankValue(rank) {
   const index = CARD_RANK_ORDER.indexOf(rank);
   return index >= 0 ? index : -1;
+}
+
+function countBy(items, keyFn) {
+  const counts = new Map();
+  for (const item of items) {
+    const key = keyFn(item);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+
+function parseCard(card) {
+  const normalized = normalizeCardText(card);
+  if (!normalized) return null;
+  return {
+    text: normalized,
+    rank: normalized[0],
+    suit: normalized[1],
+    rankValue: rankValue(normalized[0]) + 2,
+  };
+}
+
+function findStraightHigh(cards) {
+  const uniqueRanks = [...new Set(cards.map((card) => card.rankValue))].sort((a, b) => b - a);
+  if (uniqueRanks.includes(14)) {
+    uniqueRanks.push(1);
+  }
+
+  let run = 1;
+  let bestHigh = null;
+  for (let index = 1; index < uniqueRanks.length; index += 1) {
+    if (uniqueRanks[index - 1] - 1 === uniqueRanks[index]) {
+      run += 1;
+      if (run >= 5) {
+        bestHigh = uniqueRanks[index - 4];
+        break;
+      }
+    } else if (uniqueRanks[index - 1] !== uniqueRanks[index]) {
+      run = 1;
+    }
+  }
+
+  return bestHigh;
+}
+
+function deriveMadeHandCategory(heroCards, boardCards) {
+  const combined = [...heroCards, ...boardCards];
+  if (combined.length === 0) return 'high_card';
+
+  const bySuit = countBy(combined, (card) => card.suit);
+  const flushSuit = [...bySuit.entries()].find(([, count]) => count >= 5)?.[0] || null;
+  if (flushSuit) {
+    const flushCards = combined.filter((card) => card.suit === flushSuit);
+    if (findStraightHigh(flushCards)) {
+      return 'straight_flush';
+    }
+  }
+
+  const rankCounts = [...countBy(combined, (card) => card.rankValue).values()].sort((a, b) => b - a);
+  if (rankCounts[0] >= 4) return 'quads';
+  if (rankCounts[0] >= 3 && rankCounts[1] >= 2) return 'full_house';
+  if (flushSuit) return 'flush';
+  if (findStraightHigh(combined)) return 'straight';
+  if (rankCounts[0] >= 3) return 'trips';
+  if (rankCounts[0] >= 2 && rankCounts[1] >= 2) return 'two_pair';
+  if (rankCounts[0] >= 2) return 'pair';
+  return 'high_card';
+}
+
+function classifyRankPosition(rank, boardRanksDesc) {
+  if (boardRanksDesc.length === 0) return 'bottom';
+  const highest = boardRanksDesc[0];
+  if (rank === highest) return 'top';
+  if (boardRanksDesc.length === 1) return 'bottom';
+  const second = boardRanksDesc[1];
+  if (rank === second) return 'middle';
+  return 'bottom';
+}
+
+function derivePairingDetail(heroCards, boardCards, madeHandCategory) {
+  if (boardCards.length === 0 || heroCards.length !== 2) {
+    return 'none';
+  }
+
+  const heroRanks = heroCards.map((card) => card.rankValue);
+  const boardRanks = boardCards.map((card) => card.rankValue);
+  const combinedRanks = [...heroRanks, ...boardRanks];
+  const boardDistinctDesc = [...new Set(boardRanks)].sort((a, b) => b - a);
+  const combinedCounts = countBy(combinedRanks, (rank) => rank);
+  const boardCounts = countBy(boardRanks, (rank) => rank);
+  const heroCounts = countBy(heroRanks, (rank) => rank);
+  const heroDistinct = [...new Set(heroRanks)];
+  const heroBoardMatches = heroDistinct.filter((rank) => boardCounts.get(rank) > 0);
+  const hasPocketPair = heroDistinct.length === 1;
+  const pocketPairRank = hasPocketPair ? heroDistinct[0] : null;
+
+  if (madeHandCategory === 'quads') return 'quads';
+  if (madeHandCategory === 'full_house') return 'full_house';
+
+  if (hasPocketPair && pocketPairRank != null && combinedCounts.get(pocketPairRank) === 3) {
+    const position = classifyRankPosition(pocketPairRank, boardDistinctDesc);
+    if (position === 'top') return 'top_set';
+    if (position === 'middle') return 'middle_set';
+    return 'bottom_set';
+  }
+
+  if (madeHandCategory === 'trips') {
+    const heroTripRank = heroDistinct.find((rank) => combinedCounts.get(rank) === 3);
+    if (heroTripRank != null) return 'trips';
+  }
+
+  if (madeHandCategory === 'two_pair') {
+    return 'two_pair';
+  }
+
+  if (madeHandCategory !== 'pair') {
+    return 'none';
+  }
+
+  if (hasPocketPair && pocketPairRank != null) {
+    const highestBoardRank = boardDistinctDesc[0];
+    if (pocketPairRank > highestBoardRank) return 'overpair';
+    return 'underpair';
+  }
+
+  if (heroBoardMatches.length > 0) {
+    const matchedRank = heroBoardMatches.sort((a, b) => b - a)[0];
+    const position = classifyRankPosition(matchedRank, boardDistinctDesc);
+    if (position === 'top') return 'top_pair';
+    if (position === 'middle') return 'middle_pair';
+    return 'bottom_pair';
+  }
+
+  return 'none';
+}
+
+function deriveHeroHandFacts(cards, boardCards) {
+  const heroCards = cards.map(parseCard).filter(Boolean).slice(0, 2);
+  const parsedBoard = boardCards.map(parseCard).filter(Boolean);
+  const heroMadeHandCategory = deriveMadeHandCategory(heroCards, parsedBoard);
+  const heroPairingDetail = derivePairingDetail(heroCards, parsedBoard, heroMadeHandCategory);
+
+  return {
+    heroMadeHandCategory,
+    heroPairingDetail,
+  };
 }
 
 function normalizePosition(value) {
@@ -145,9 +317,11 @@ export function buildHandContext(hand) {
   const heroCards = buildHeroCards(hand?.hero?.cards);
   const heroPosition = normalizePosition(hand?.hero?.position);
   const heroHandCode = buildCanonicalHandCode(heroCards);
+  const boardCards = Array.isArray(hand?.board?.cards) ? hand.board.cards.filter(Boolean) : [];
   const heroPreflopDecision = summarizeDecision(hand?.heroStreetSummary?.preflop);
   const aggressorFacts = derivePreflopAggressor(timeline.actions, heroPosition, heroPreflopDecision?.action);
   const heroPostflopPosition = deriveHeroPostflopPosition(timeline.actions, Boolean(hand?.board?.didReachFlop));
+  const heroHandFacts = deriveHeroHandFacts(heroCards, boardCards);
 
   return {
     handId: hand?.id || null,
@@ -177,7 +351,7 @@ export function buildHandContext(hand) {
     },
     board: {
       didReachFlop: Boolean(hand?.board?.didReachFlop),
-      cards: Array.isArray(hand?.board?.cards) ? hand.board.cards.filter(Boolean) : [],
+      cards: boardCards,
     },
     heroStreetSummary: {
       preflop: heroPreflopDecision,
@@ -185,6 +359,7 @@ export function buildHandContext(hand) {
       turn: summarizeDecision(hand?.heroStreetSummary?.turn),
       river: summarizeDecision(hand?.heroStreetSummary?.river),
     },
+    heroHandFacts,
     result: {
       netBb: numberOrNull(hand?.result?.netBb),
       netChips: numberOrNull(hand?.result?.netChips),
@@ -200,8 +375,12 @@ export function buildHandContext(hand) {
       heroWasPreflopAggressor: aggressorFacts.heroWasPreflopAggressor,
       heroCanCbetFlop: Boolean(hand?.board?.didReachFlop) && aggressorFacts.heroWasPreflopAggressor,
       heroPostflopPosition,
+      heroMadeHandCategory: heroHandFacts.heroMadeHandCategory,
+      heroPairingDetail: heroHandFacts.heroPairingDetail,
     },
     notes: cleanText(hand?.notes, 1000),
     manualActionText: cleanText(hand?.manualActionText, 1600),
   };
 }
+
+export { MADE_HAND_CATEGORIES, PAIRING_DETAILS };
