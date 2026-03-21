@@ -60,6 +60,7 @@ function buildFieldConflict(id, label, type, currentValue, suggestedValue) {
     type,
     currentValue,
     suggestedValue,
+    currentSource: null,
     resolution: null,
   };
 }
@@ -377,6 +378,74 @@ export function applyParsedFieldsToSnapshot(snapshot, parsedFields, options = {}
     nextSnapshot: next,
     conflicts,
   };
+}
+
+export function buildParsedFieldValueMap(parsedFields) {
+  const values = {};
+  const hero = parsedFields?.hero || {};
+  const board = parsedFields?.board || {};
+  const result = parsedFields?.result || {};
+  const summary = parsedFields?.heroStreetSummary || {};
+
+  if (hero.position) values['hero.position'] = toUpper(hero.position);
+
+  const heroCards = Array.isArray(hero.cards) ? hero.cards : [];
+  if (heroCards[0]) values['hero.card1'] = normalizeCard(heroCards[0]) || '';
+  if (heroCards[1]) values['hero.card2'] = normalizeCard(heroCards[1]) || '';
+
+  if (typeof board.didReachFlop === 'boolean') {
+    values['board.didReachFlop'] = board.didReachFlop;
+  }
+
+  const boardCards = Array.isArray(board.cards)
+    ? board.cards.map((card) => normalizeCard(card)).filter(Boolean).slice(0, 5)
+    : [];
+  if (boardCards[0]) values['board.flop1'] = boardCards[0];
+  if (boardCards[1]) values['board.flop2'] = boardCards[1];
+  if (boardCards[2]) values['board.flop3'] = boardCards[2];
+  if (boardCards[3]) values['board.turn'] = boardCards[3];
+  if (boardCards[4]) values['board.river'] = boardCards[4];
+
+  for (const street of STREETS) {
+    const parsedStreet = summary?.[street] || {};
+    if (parsedStreet.action != null) {
+      values[`heroStreetSummary.${street}.action`] = toAction(parsedStreet.action);
+    }
+    if (parsedStreet.amountBb != null) {
+      values[`heroStreetSummary.${street}.amountBb`] = toNumberString(parsedStreet.amountBb);
+    }
+    if (parsedStreet.facingAmountBb != null) {
+      values[`heroStreetSummary.${street}.facingAmountBb`] = toNumberString(parsedStreet.facingAmountBb);
+    }
+    if (parsedStreet.streetNetBb != null) {
+      values[`heroStreetSummary.${street}.streetNetBb`] = toNumberString(parsedStreet.streetNetBb);
+    }
+    if (parsedStreet.amountChips != null) {
+      values[`heroStreetSummary.${street}.amountChips`] = toNumberString(parsedStreet.amountChips);
+    }
+  }
+
+  if (result.netBb != null) values['result.netBb'] = toNumberString(result.netBb);
+  if (result.netChips != null) values['result.netChips'] = toNumberString(result.netChips);
+
+  return values;
+}
+
+export function preferConflictSource(conflicts, preferredValuesById, preferredSource = 'parser') {
+  const safeConflicts = Array.isArray(conflicts) ? conflicts : [];
+  const safePreferredValues = preferredValuesById || {};
+
+  return safeConflicts.map((conflict) => {
+    const preferredValue = safePreferredValues[conflict?.id];
+    if (preferredValue === undefined) return conflict;
+    if (!equalByType(conflict?.currentValue, preferredValue, conflict?.type)) return conflict;
+
+    return {
+      ...conflict,
+      currentSource: preferredSource,
+      resolution: conflict?.resolution || 'keep',
+    };
+  });
 }
 
 export function applyConflictResolution(snapshot, conflict, resolution) {

@@ -69,3 +69,12 @@ test('infers fold-street result when hero bets then folds to a jam', () => {
   assert.equal(parsed.parsedFields.heroStreetSummary.turn.streetNetBb, -26.8);
   assert.equal(parsed.parsedFields.result.netBb, -46.35);
 });
+
+test('keeps explicit turn rank from text and ignores rank letters inside action words', () => {
+  const parsed = parseManualActionText(
+    'I had JJ, I raise, he calls. flop T92 rainbow. i bet he raises, i call. turn K, i check, he jams all-in, i fold.'
+  );
+
+  assert.equal(parsed.parsedFields.board.cards.map((card) => card[0]).join(''), 'T92K');
+  assert.equal(parsed.parsedFields.board.cards[3][0], 'K');
+});

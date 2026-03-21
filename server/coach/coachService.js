@@ -236,10 +236,125 @@ function getInvalidOutputDiagnostics(error) {
   };
 }
 
-export async function coachHand(payload, options = {}) {
+function sanitizeCoachAttempt(attempt) {
+  return {
+    model: attempt?.model ? String(attempt.model) : null,
+    state: attempt?.state ? String(attempt.state) : 'unknown',
+    reason: attempt?.reason ? String(attempt.reason) : null,
+    status: Number.isFinite(Number(attempt?.status)) ? Number(attempt.status) : null,
+    durationMs: Number.isFinite(Number(attempt?.durationMs)) ? Math.max(0, Math.round(Number(attempt.durationMs))) : null,
+    attemptIndex: Number.isFinite(Number(attempt?.attemptIndex)) ? Math.max(1, Math.round(Number(attempt.attemptIndex))) : null,
+    totalModels: Number.isFinite(Number(attempt?.totalModels)) ? Math.max(1, Math.round(Number(attempt.totalModels))) : null,
+    pass: attempt?.pass ? String(attempt.pass) : 'initial',
+  };
+}
+
+function sanitizeModelSelection(selection, stopReason = null) {
+  return {
+    scope: selection?.scope ? String(selection.scope) : 'coach',
+    strategy: selection?.strategy ? String(selection.strategy) : 'static',
+    plannedOrder: Array.isArray(selection?.plannedOrder)
+      ? selection.plannedOrder.map((item) => String(item || '').trim()).filter(Boolean)
+      : [],
+    stopReason: stopReason ? String(stopReason) : null,
+  };
+}
+
+function buildCoachTimings({ totalMs = null, providerMs = null } = {}) {
+  return {
+    totalMs: Number.isFinite(Number(totalMs)) ? Math.max(0, Math.round(Number(totalMs))) : null,
+    providerMs: Number.isFinite(Number(providerMs)) ? Math.max(0, Math.round(Number(providerMs))) : null,
+  };
+}
+
+function buildCoachResponse({
+  parsedPayload,
+  generation,
+  provider,
+  windowSize,
+  truncated,
+  responseMode,
+  warnings,
+  attemptLog,
+  totalMs,
+  providerMs,
+} = {}) {
+  return {
+    assistant: parsedPayload.assistant,
+    meta: {
+      provider: generation.provider || provider.name || 'openrouter',
+      model: generation.model,
+      fallbackUsed: Boolean(generation.fallbackUsed),
+      historyWindowUsed: windowSize,
+      truncatedHistory: truncated,
+      failedModelAttempts: toFailedModelAttempts(attemptLog),
+      attemptSummary: summarizeAttempts(attemptLog),
+      attempts: attemptLog.map(sanitizeCoachAttempt),
+      modelSelection: sanitizeModelSelection(generation?.selectionPlan, generation?.stopReason),
+      timings: buildCoachTimings({ totalMs, providerMs }),
+      responseMode,
+    },
+    warnings,
+  };
+}
+
+function buildCoachMessages({ responseMode, handContext, historyWindow, message, windowSize }) {
+  return responseMode === 'followup'
+    ? buildFollowupCoachMessages({
+        handContext,
+        history: historyWindow,
+        message,
+        historyWindowSize: windowSize,
+      })
+    : buildInitialCoachMessages({
+        handContext,
+        history: historyWindow,
+        message,
+        historyWindowSize: windowSize,
+      });
+}
+
+function buildCoachRepairMessages({
+  responseMode,
+  handContext,
+  historyWindow,
+  message,
+  diagnostics,
+  error,
+  windowSize,
+} = {}) {
+  return responseMode === 'followup'
+    ? buildFollowupCoachRepairMessages({
+        handContext,
+        history: historyWindow,
+        message,
+        previousOutput: diagnostics.previousOutput || getInvalidOutputSnippet(error),
+        validationError: error?.message || 'Invalid JSON/schema from model.',
+        validationFailures: diagnostics.validationFailures,
+        historyWindowSize: windowSize,
+      })
+    : buildInitialCoachRepairMessages({
+        handContext,
+        history: historyWindow,
+        message,
+        previousOutput: diagnostics.previousOutput || getInvalidOutputSnippet(error),
+        validationError: error?.message || 'Invalid JSON/schema from model.',
+        validationFailures: diagnostics.validationFailures,
+        historyWindowSize: windowSize,
+      });
+}
+
+async function emitCoachEvent(writer, event) {
+  if (typeof writer !== 'function') return;
+  await writer(event);
+}
+
+async function executeCoachHand(payload, options = {}) {
+  const startedAtMs = Date.now();
   const request = validateCoachRequest(payload);
   const { history: historyWindow, truncated, windowSize } = truncateHistoryWindow(request.history, HISTORY_WINDOW_SIZE);
   const responseMode = detectResponseMode(request.history);
+  const writeEvent = options.writeEvent;
 
   const handContext = buildHandContext(request.hand);
   const provider =
@@ -251,36 +366,85 @@ export async function coachHand(payload, options = {}) {
     warnings.push(`History truncated to the last ${windowSize} messages.`);
   }
 
-  const firstPassMessages =
-    responseMode === 'followup'
-      ? buildFollowupCoachMessages({
-          handContext,
-          history: historyWindow,
-          message: request.message,
-          historyWindowSize: windowSize,
-        })
-      : buildInitialCoachMessages({
-          handContext,
-          history: historyWindow,
-          message: request.message,
-          historyWindowSize: windowSize,
-        });
-
   const modelContentValidator = (content) => {
     parseAndValidateModelContent(content, handContext, responseMode);
   };
 
+  const streamAttempt = async (event) => {
+    if (!writeEvent) return null;
+    if (event?.phase === 'selection_plan') {
+      await emitCoachEvent(writeEvent, {
+        type: 'selection_plan',
+        scope: event.scope,
+        strategy: event.strategy,
+        plannedOrder: event.plannedOrder,
+        totalModels: event.totalModels,
+        pass: event.pass || 'initial',
+      });
+      return null;
+    }
+
+    if (event?.phase === 'attempt_started') {
+      await emitCoachEvent(writeEvent, {
+        type: 'attempt_started',
+        model: event.model,
+        attemptIndex: event.attemptIndex,
+        totalModels: event.totalModels,
+        pass: event.pass || 'initial',
+      });
+      return null;
+    }
+
+    if (event?.phase === 'attempt_completed') {
+      await emitCoachEvent(writeEvent, {
+        type: 'attempt_completed',
+        model: event.model,
+        state: event.state,
+        reason: event.reason || null,
+        status: event.status ?? null,
+        durationMs: event.durationMs ?? null,
+        attemptIndex: event.attemptIndex,
+        totalModels: event.totalModels,
+        pass: event.pass || 'initial',
+      });
+    }
+
+    return null;
+  };
+
   let generation;
   let attemptLog = [];
+  let providerMs = 0;
+  let firstPassStartedAtMs = 0;
 
   try {
+    const firstPassMessages = buildCoachMessages({
+      responseMode,
+      handContext,
+      historyWindow,
+      message: request.message,
+      windowSize,
+    });
+    firstPassStartedAtMs = Date.now();
     generation = await provider.generate({
       messages: firstPassMessages,
       timeoutMs,
+      requestKind: 'coach',
+      attemptContext: { pass: 'initial' },
+      signal: options.signal,
+      onAttempt: streamAttempt,
       validateContent: modelContentValidator,
     });
+    providerMs += Date.now() - firstPassStartedAtMs;
     attemptLog = mergeAttempts(attemptLog, generation?.attempts);
   } catch (error) {
+    if (firstPassStartedAtMs > 0) {
+      providerMs += Date.now() - firstPassStartedAtMs;
+      firstPassStartedAtMs = 0;
+    }
+    if (error?.details?.attempts) {
+      attemptLog = mergeAttempts(attemptLog, error.details.attempts);
+    }
     if (error?.code !== 'COACH_PROVIDER_OUTPUT_INVALID') {
       throw attachAttemptDetails(error, error?.details?.attempts);
     }
@@ -288,36 +452,39 @@ export async function coachHand(payload, options = {}) {
     warnings.push('Coach output required one repair retry to return valid JSON.');
     const diagnostics = getInvalidOutputDiagnostics(error);
     const firstPassAttempts = Array.isArray(error?.details?.attempts) ? error.details.attempts : [];
+    await emitCoachEvent(writeEvent, {
+      type: 'repair_started',
+      message: 'Coach output was invalid. Starting one repair retry.',
+    });
 
-    const repairMessages =
-      responseMode === 'followup'
-        ? buildFollowupCoachRepairMessages({
-            handContext,
-            history: historyWindow,
-            message: request.message,
-            previousOutput: diagnostics.previousOutput || getInvalidOutputSnippet(error),
-            validationError: error?.message || 'Invalid JSON/schema from model.',
-            validationFailures: diagnostics.validationFailures,
-            historyWindowSize: windowSize,
-          })
-        : buildInitialCoachRepairMessages({
-            handContext,
-            history: historyWindow,
-            message: request.message,
-            previousOutput: diagnostics.previousOutput || getInvalidOutputSnippet(error),
-            validationError: error?.message || 'Invalid JSON/schema from model.',
-            validationFailures: diagnostics.validationFailures,
-            historyWindowSize: windowSize,
-          });
+    const repairMessages = buildCoachRepairMessages({
+      responseMode,
+      handContext,
+      historyWindow,
+      message: request.message,
+      diagnostics,
+      error,
+      windowSize,
+    });
 
+    let repairStartedAtMs = 0;
     try {
+      repairStartedAtMs = Date.now();
       generation = await provider.generate({
         messages: repairMessages,
         timeoutMs,
+        requestKind: 'coach',
+        attemptContext: { pass: 'repair' },
+        signal: options.signal,
+        onAttempt: streamAttempt,
         validateContent: modelContentValidator,
       });
+      providerMs += Date.now() - repairStartedAtMs;
       attemptLog = mergeAttempts(firstPassAttempts, generation?.attempts);
     } catch (repairError) {
+      if (repairStartedAtMs > 0) {
+        providerMs += Date.now() - repairStartedAtMs;
+      }
       const attempts = mergeAttempts(firstPassAttempts, repairError?.details?.attempts);
       const validationFailures = extractValidationFailures(attempts);
       throw createCoachError('Coach output remained invalid after one repair retry.', {
@@ -353,20 +520,29 @@ export async function coachHand(payload, options = {}) {
     throw attachAttemptDetails(error, attempts);
   }
 
-  const failedModelAttempts = toFailedModelAttempts(attemptLog);
-
-  return {
-    assistant: parsedPayload.assistant,
-    meta: {
-      provider: generation.provider || provider.name || 'openrouter',
-      model: generation.model,
-      fallbackUsed: Boolean(generation.fallbackUsed),
-      historyWindowUsed: windowSize,
-      truncatedHistory: truncated,
-      failedModelAttempts,
-      attemptSummary: summarizeAttempts(attemptLog),
-      responseMode,
-    },
+  return buildCoachResponse({
+    parsedPayload,
+    generation,
+    provider,
+    windowSize,
+    truncated,
+    responseMode,
     warnings,
-  };
+    attemptLog,
+    totalMs: Date.now() - startedAtMs,
+    providerMs,
+  });
+}
+
+export async function coachHand(payload, options = {}) {
+  return executeCoachHand(payload, options);
+}
+
+export async function coachHandStream(payload, options = {}) {
+  const response = await executeCoachHand(payload, options);
+  await emitCoachEvent(options.writeEvent, {
+    type: 'final_result',
+    response,
+  });
+  return response;
 }

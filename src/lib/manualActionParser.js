@@ -245,7 +245,17 @@ function parseStreetBoardCards(clause, street, usedCards = []) {
     return cards.length === 3 ? cards : [];
   }
 
-  const rankMatch = withoutStreetLabel.toUpperCase().match(/\b([2-9TJQKA])\b/);
+  const streetLabelPattern = new RegExp(`\\b${street}\\b`, 'i');
+  const clauseText = String(clause || '');
+  const rankCandidateText = (streetLabelPattern.test(clauseText)
+    ? clauseText.split(streetLabelPattern).slice(1).join(' ')
+    : clauseText
+  )
+    .replace(/^[\s:,\-]+/, '')
+    .replace(/^(?:is|was|the|comes|brings|peels|pairs)\b[\s,:-]*/i, '')
+    .trim();
+
+  const rankMatch = rankCandidateText.match(/^([2-9TJQKA])(?=[^a-z]|$)/i);
   if (!rankMatch) return [];
   const rank = rankMatch[1];
   for (const suit of SUIT_FALLBACK) {

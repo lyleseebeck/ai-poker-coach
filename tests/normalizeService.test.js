@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeHandFromText } from '../server/normalize/normalizeService.js';
+import { normalizeHandFromText, normalizeHandFromTextStream } from '../server/normalize/normalizeService.js';
 
 function makePayload(overrides = {}) {
   return {
@@ -146,4 +146,228 @@ test('normalizeHandFromText canonicalizes shorthand hand code and avoids board d
   assert.notEqual(cards[1], 'As');
   assert.equal(cards[0][0], 'A');
   assert.equal(cards[1][0], 'A');
+});
+
+test('normalizeHandFromTextStream emits provisional result and keeps checking later attempts', async () => {
+  const events = [];
+  const provider = {
+    name: 'openrouter',
+    async generateWithProgress({ onAttempt }) {
+      await onAttempt({
+        phase: 'attempt_started',
+        model: 'provider/model-a:free',
+        attemptIndex: 1,
+        totalModels: 3,
+      });
+      await onAttempt({
+        phase: 'attempt_completed',
+        model: 'provider/model-a:free',
+        state: 'completed',
+        durationMs: 12,
+        attemptIndex: 1,
+        totalModels: 3,
+        candidate: {
+          provider: 'openrouter',
+          model: 'provider/model-a:free',
+          content: JSON.stringify({
+            parsedFields: {
+              hero: { position: 'BTN' },
+            },
+            confidenceByField: {
+              heroPosition: 0.55,
+            },
+            missingRequired: [],
+            needsUserInput: [],
+          }),
+          fallbackUsed: false,
+        },
+      });
+
+      await onAttempt({
+        phase: 'attempt_started',
+        model: 'provider/model-b:free',
+        attemptIndex: 2,
+        totalModels: 3,
+      });
+      await onAttempt({
+        phase: 'attempt_completed',
+        model: 'provider/model-b:free',
+        state: 'failed',
+        reason: 'timeout',
+        durationMs: 45_000,
+        attemptIndex: 2,
+        totalModels: 3,
+      });
+
+      await onAttempt({
+        phase: 'attempt_started',
+        model: 'provider/model-c:free',
+        attemptIndex: 3,
+        totalModels: 3,
+      });
+      await onAttempt({
+        phase: 'attempt_completed',
+        model: 'provider/model-c:free',
+        state: 'completed',
+        durationMs: 18,
+        attemptIndex: 3,
+        totalModels: 3,
+        candidate: {
+          provider: 'openrouter',
+          model: 'provider/model-c:free',
+          content: JSON.stringify({
+            parsedFields: {
+              hero: { position: 'BTN', handCode: 'AA', cards: ['As', 'Ah'] },
+              board: { didReachFlop: true },
+              heroStreetSummary: {
+                preflop: { action: 'raise', amountBb: 9 },
+                flop: { action: 'call', facingAmountBb: 4.5 },
+                turn: { action: 'fold', facingAmountBb: 24 },
+              },
+              result: { netBb: -25 },
+            },
+            confidenceByField: {
+              heroPosition: 0.95,
+              heroCards: 0.95,
+              heroHandCode: 0.95,
+              boardDidReachFlop: 0.95,
+              streetPreflop: 0.95,
+              streetFlop: 0.95,
+              streetTurn: 0.95,
+              result_netBb: 0.95,
+            },
+            missingRequired: [],
+            needsUserInput: [],
+          }),
+          fallbackUsed: true,
+        },
+      });
+    },
+  };
+
+  const response = await normalizeHandFromTextStream(makePayload(), {
+    provider,
+    writeEvent: async (event) => {
+      events.push(event);
+    },
+  });
+
+  assert.equal(events[0].type, 'deterministic_started');
+  assert.equal(events[1].type, 'deterministic_completed');
+  assert.equal(events.some((event) => event.type === 'provisional_result' && event.model === 'provider/model-a:free'), true);
+  assert.equal(events.some((event) => event.type === 'attempt_completed' && event.model === 'provider/model-b:free' && event.reason === 'timeout'), true);
+  assert.equal(events[events.length - 1].type, 'final_result');
+  assert.equal(response.meta.model, 'provider/model-c:free');
+  assert.equal(response.meta.resultSource, 'model_merged');
+  assert.equal(Array.isArray(response.meta.attempts), true);
+  assert.equal(response.meta.attempts.length, 3);
+});
+
+test('normalizeHandFromTextStream stops early after a strong complete candidate', async () => {
+  const events = [];
+  let secondAttemptStarted = false;
+  const payload = makePayload({
+    manualActionText: 'button opens, flop call, turn fold',
+    deterministicParse: {
+      parsedFields: {
+        hero: {
+          position: 'BTN',
+          handCode: 'AA',
+        },
+        board: {
+          didReachFlop: true,
+        },
+        heroStreetSummary: {
+          preflop: { action: 'raise', amountBb: 9 },
+          flop: { action: 'call', facingAmountBb: 4.5 },
+          turn: { action: 'fold', facingAmountBb: 24 },
+        },
+        result: {
+          netBb: -25,
+        },
+      },
+      confidence: {
+        byField: {
+          heroPosition: 0.95,
+          heroHandCode: 0.95,
+          boardDidReachFlop: 0.95,
+          streetPreflop: 0.95,
+          streetFlop: 0.95,
+          streetTurn: 0.95,
+          result_netBb: 0.95,
+        },
+      },
+      missingRequired: ['hero.cards'],
+    },
+  });
+  const provider = {
+    name: 'openrouter',
+    async generateWithProgress({ onAttempt }) {
+      await onAttempt({
+        phase: 'selection_plan',
+        scope: 'normalize',
+        strategy: 'ranked',
+        plannedOrder: ['provider/model-a:free', 'provider/model-b:free'],
+        totalModels: 2,
+      });
+      await onAttempt({
+        phase: 'attempt_started',
+        model: 'provider/model-a:free',
+        attemptIndex: 1,
+        totalModels: 2,
+      });
+      const stop = await onAttempt({
+        phase: 'attempt_completed',
+        model: 'provider/model-a:free',
+        state: 'completed',
+        durationMs: 12,
+        attemptIndex: 1,
+        totalModels: 2,
+        candidate: {
+          provider: 'openrouter',
+          model: 'provider/model-a:free',
+          content: JSON.stringify({
+            parsedFields: {
+              hero: { position: 'BTN', handCode: 'AA', cards: ['As', 'Ah'] },
+              board: { didReachFlop: true },
+              heroStreetSummary: {
+                preflop: { action: 'raise', amountBb: 9 },
+                flop: { action: 'call', facingAmountBb: 4.5 },
+                turn: { action: 'fold', facingAmountBb: 24 },
+              },
+              result: { netBb: -25 },
+            },
+            confidenceByField: {
+              heroPosition: 0.95,
+              heroCards: 0.95,
+              heroHandCode: 0.95,
+              boardDidReachFlop: 0.95,
+              streetPreflop: 0.95,
+              streetFlop: 0.95,
+              streetTurn: 0.95,
+              result_netBb: 0.95,
+            },
+            missingRequired: [],
+            needsUserInput: [],
+          }),
+          fallbackUsed: false,
+        },
+      });
+      assert.equal(stop?.stop, true);
+      assert.equal(stop?.stopReason, 'first_valid_candidate');
+      secondAttemptStarted = false;
+    },
+  };
+
+  const response = await normalizeHandFromTextStream(payload, {
+    provider,
+    writeEvent: async (event) => {
+      events.push(event);
+    },
+  });
+
+  assert.equal(secondAttemptStarted, false);
+  assert.equal(events.some((event) => event.type === 'selection_plan'), true);
+  assert.equal(response.meta.modelSelection.stopReason, 'first_valid_candidate');
+  assert.equal(response.meta.attempts.length, 1);
 });

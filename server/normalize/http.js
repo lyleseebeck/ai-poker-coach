@@ -1,4 +1,4 @@
-import { normalizeHandFromText } from './normalizeService.js';
+import { normalizeHandFromText, normalizeHandFromTextStream } from './normalizeService.js';
 import {
   applyRateLimitHeaders,
   DEFAULT_NORMALIZE_RATE_LIMIT_PER_MINUTE,
@@ -13,6 +13,35 @@ function sendJson(res, statusCode, payload) {
   res.statusCode = statusCode;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.end(JSON.stringify(payload));
+}
+
+function startNdjson(res) {
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+}
+
+function writeNdjson(res, payload) {
+  const line = `${JSON.stringify(payload)}\n`;
+  if (typeof res.write === 'function') {
+    res.write(line);
+    return;
+  }
+  res.end(line);
+}
+
+function createRequestAbortSignal(req, res) {
+  const controller = new AbortController();
+  const abort = () => {
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+  };
+  req?.on?.('aborted', abort);
+  req?.on?.('close', abort);
+  res?.on?.('close', abort);
+  return controller;
 }
 
 function parseJsonText(raw) {
@@ -116,7 +145,91 @@ export async function handleHandNormalizeRequest(req, res, options = {}) {
   }
 }
 
+export async function handleHandNormalizeStreamRequest(req, res, options = {}) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, {
+      error: {
+        code: 'METHOD_NOT_ALLOWED',
+        message: 'Method not allowed. Use POST /api/hand-normalize/stream.',
+      },
+    });
+    return;
+  }
+
+  const env = options.env || process.env;
+  const normalizeHandFromTextStreamImpl =
+    typeof options.normalizeHandFromTextStreamImpl === 'function'
+      ? options.normalizeHandFromTextStreamImpl
+      : normalizeHandFromTextStream;
+  const rateLimitImpl = typeof options.rateLimitImpl === 'function' ? options.rateLimitImpl : enforceIpRateLimit;
+  const requestsPerMinute = resolveRequestsPerMinute(
+    env?.RATE_LIMIT_NORMALIZE_PER_MINUTE,
+    DEFAULT_NORMALIZE_RATE_LIMIT_PER_MINUTE
+  );
+
+  try {
+    const rateLimitResult = await rateLimitImpl({
+      req,
+      namespace: NORMALIZE_RATE_LIMIT_NAMESPACE,
+      requestsPerMinute,
+      env,
+      fetchImpl: options.fetchImpl,
+      nowMs: options.nowMs,
+    });
+
+    if (!rateLimitResult?.allowed) {
+      applyRateLimitHeaders(res, rateLimitResult);
+      sendJson(res, 429, {
+        error: {
+          code: 'RATE_LIMITED',
+          message: `Rate limit exceeded. Try again in ${rateLimitResult.retryAfterSeconds || 1}s.`,
+        },
+      });
+      return;
+    }
+
+    const body = await readJsonBody(req);
+    const requestAbortController = createRequestAbortSignal(req, res);
+    startNdjson(res);
+    await normalizeHandFromTextStreamImpl(body, {
+      signal: requestAbortController.signal,
+      writeEvent: async (event) => {
+        writeNdjson(res, event);
+      },
+    });
+    if (!requestAbortController.signal.aborted) {
+      res.end();
+    }
+  } catch (error) {
+    if (String(error?.name || '') === 'AbortError') {
+      try {
+        res.end();
+      } catch {}
+      return;
+    }
+    const statusCode = Number(error?.statusCode) || 500;
+    const payload = {
+      error: {
+        code: error?.code || 'NORMALIZE_SERVER_ERROR',
+        message: error?.message || 'Unexpected normalize server error.',
+        ...(error?.details ? { details: error.details } : {}),
+      },
+    };
+
+    if (res.getHeader && res.getHeader('content-type')) {
+      writeNdjson(res, { type: 'error', ...payload.error });
+      res.end();
+      return;
+    }
+
+    sendJson(res, statusCode, payload);
+  }
+}
+
 export function registerHandNormalizeEndpoint(server) {
+  server.middlewares.use('/api/hand-normalize/stream', async (req, res) => {
+    await handleHandNormalizeStreamRequest(req, res);
+  });
   server.middlewares.use('/api/hand-normalize', async (req, res) => {
     await handleHandNormalizeRequest(req, res);
   });

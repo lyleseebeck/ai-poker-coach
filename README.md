@@ -64,6 +64,10 @@ Required:
 Optional:
 - `COACH_OPENROUTER_MODELS=<comma-separated model ids, each containing :free>`
   If omitted/partial, the server auto-appends a built-in free fallback chain.
+- `COACH_OPENROUTER_DISCOVER_FREE_MODELS=false`
+  Optional opt-out. By default, the server also discovers current OpenRouter `:free` models and appends them to the retry pool.
+- `COACH_OPENROUTER_DISCOVERY_TTL_MS=3600000`
+  Optional cache TTL for discovered free models.
 - `COACH_REQUEST_TIMEOUT_MS=25000`
 - `COACH_SITE_URL=http://localhost:5173`
 - `COACH_APP_NAME=AI Poker Coach`
@@ -76,9 +80,14 @@ Recommended compatibility-first model order:
 - `arcee-ai/trinity-large-preview:free`
 
 Free-only enforcement:
-- Every configured model must include `:free`.
+- Every configured model must include `:free` unless you explicitly use `openrouter/free`.
 - Non-free model ids fail fast during provider initialization.
 - If a model returns `404` with `settings/privacy`, update OpenRouter privacy filters or remove that model from the list.
+
+Dynamic free-model discovery:
+- The app keeps trying models until it finds a valid response or exhausts the full free-model pool.
+- The pool includes your configured free models, the built-in fallbacks, newly discovered OpenRouter `:free` models, and `openrouter/free` as a last-resort free router.
+- Discovery is cached in-process for 1 hour by default.
 
 Rate-limit enforcement:
 - `POST /api/coach-hand` and `POST /api/hand-normalize` are IP rate-limited with Upstash Redis.

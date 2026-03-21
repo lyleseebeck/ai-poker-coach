@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { coachHand } from '../lib/coachClient.js';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { streamCoachHand } from '../lib/coachStreamClient.js';
+import { createCoachDiagnosticsState, reduceCoachDiagnostics } from '../lib/coachStreamDiagnostics.js';
+import { formatDurationMs } from '../lib/normalizeStreamDiagnostics.js';
 
 const HISTORY_WINDOW_SIZE = 8;
 
@@ -44,6 +46,46 @@ function verdictClasses(verdict) {
     default:
       return 'bg-slate-100 text-slate-700 border border-slate-200';
   }
+}
+
+function coachAttemptStatusLabel(attempt) {
+  const state = String(attempt?.state || 'pending');
+  if (state === 'running') return 'Running';
+  if (state === 'completed') return 'Completed';
+  if (state === 'failed') {
+    if (Number.isFinite(Number(attempt?.status))) return `Failed (${Number(attempt.status)})`;
+    if (attempt?.reason) return `Failed (${String(attempt.reason).replace(/_/g, ' ')})`;
+    return 'Failed';
+  }
+  return 'Pending';
+}
+
+function coachAttemptDurationLabel(attempt, nowMs) {
+  if (attempt?.durationMs != null) return formatDurationMs(attempt.durationMs);
+  if (String(attempt?.state || '') !== 'running') return null;
+  if (!Number.isFinite(Number(attempt?.startedAtMs))) return null;
+  return formatDurationMs(Math.max(0, nowMs - Number(attempt.startedAtMs)));
+}
+
+function coachStrategyLabel(strategy) {
+  if (!strategy) return null;
+  return String(strategy).replace(/_/g, ' ');
+}
+
+function PlannedOrderDisclosure({ plannedOrder, strategy, tone = 'emerald' }) {
+  if (!Array.isArray(plannedOrder) || plannedOrder.length === 0) return null;
+  const textClass = tone === 'slate' ? 'text-slate-500' : 'text-emerald-700';
+  const borderClass = tone === 'slate' ? 'border-slate-200 bg-slate-50' : 'border-emerald-200/70 bg-white/50';
+
+  return (
+    <details className={`rounded-md border px-2 py-1 ${borderClass}`}>
+      <summary className={`cursor-pointer text-xs font-medium ${textClass}`}>
+        Planned order ({coachStrategyLabel(strategy) || 'static'}) · {plannedOrder.length} model
+        {plannedOrder.length === 1 ? '' : 's'}
+      </summary>
+      <p className={`mt-1 break-words text-xs ${textClass}`}>{plannedOrder.join(' -> ')}</p>
+    </details>
+  );
 }
 
 function AnalysisDetails({ analysis }) {
@@ -92,7 +134,7 @@ function AnalysisDetails({ analysis }) {
   );
 }
 
-export function CoachPanel({ hands }) {
+export function CoachPanel({ hands, showSaveReminder = true }) {
   const sortedHands = useMemo(
     () => [...hands].sort((a, b) => (b?.createdAt || 0) - (a?.createdAt || 0)),
     [hands]
@@ -103,6 +145,9 @@ export function CoachPanel({ hands }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [chatByHandId, setChatByHandId] = useState({});
+  const [coachDiagnosticsByHandId, setCoachDiagnosticsByHandId] = useState({});
+  const [coachDiagnosticsNowMs, setCoachDiagnosticsNowMs] = useState(() => Date.now());
+  const coachAbortRef = useRef(null);
 
   useEffect(() => {
     if (sortedHands.length === 0) {
@@ -118,6 +163,16 @@ export function CoachPanel({ hands }) {
 
   const selectedHand = sortedHands.find((hand) => hand.id === selectedHandId) || null;
   const thread = chatByHandId[selectedHandId] || [];
+  const coachDiagnostics = coachDiagnosticsByHandId[selectedHandId] || createCoachDiagnosticsState();
+  const completedAttemptCount = coachDiagnostics.attempts.filter((attempt) => attempt.state !== 'running').length;
+
+  useEffect(() => {
+    if (!isSubmitting) return undefined;
+    const timer = window.setInterval(() => {
+      setCoachDiagnosticsNowMs(Date.now());
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [isSubmitting]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -155,14 +210,32 @@ export function CoachPanel({ hands }) {
 
     setDraftMessage('');
     setIsSubmitting(true);
+    setCoachDiagnosticsNowMs(Date.now());
+    setCoachDiagnosticsByHandId((prev) => ({
+      ...prev,
+      [targetHandId]: createCoachDiagnosticsState(),
+    }));
+    const abortController = new AbortController();
+    coachAbortRef.current = abortController;
 
     try {
-      const response = await coachHand({
-        handId: targetHandId,
-        hand: selectedHand,
-        message,
-        history,
-      });
+      const response = await streamCoachHand(
+        {
+          handId: targetHandId,
+          hand: selectedHand,
+          message,
+          history,
+        },
+        {
+          signal: abortController.signal,
+          onEvent: async (event) => {
+            setCoachDiagnosticsByHandId((prev) => ({
+              ...prev,
+              [targetHandId]: reduceCoachDiagnostics(prev[targetHandId], event, { nowMs: Date.now() }),
+            }));
+          },
+        }
+      );
 
       const assistantMessage = {
         id: makeMessageId(),
@@ -182,10 +255,29 @@ export function CoachPanel({ hands }) {
         };
       });
     } catch (submitError) {
+      if (abortController.signal.aborted) {
+        setError('Coach request stopped.');
+        return;
+      }
+      setCoachDiagnosticsByHandId((prev) => ({
+        ...prev,
+        [targetHandId]: reduceCoachDiagnostics(
+          prev[targetHandId],
+          { type: 'error', message: submitError?.message || 'Coach request failed.' },
+          { nowMs: Date.now() }
+        ),
+      }));
       setError(submitError?.message || 'Coach request failed.');
     } finally {
+      if (coachAbortRef.current === abortController) {
+        coachAbortRef.current = null;
+      }
       setIsSubmitting(false);
     }
+  };
+
+  const handleStopCoach = () => {
+    coachAbortRef.current?.abort();
   };
 
   return (
@@ -194,12 +286,23 @@ export function CoachPanel({ hands }) {
       <p className="text-sm text-slate-500 mb-4">
         Ask for GTO-focused coaching in plain language. Coach remembers only the last {HISTORY_WINDOW_SIZE} messages for context.
       </p>
+      {showSaveReminder && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+          <p className="text-sm font-medium text-amber-900">Coach only works on saved hands.</p>
+          <p className="mt-1 text-sm text-amber-800">
+            If you just entered or edited a hand above, click <span className="font-medium">Save Hand</span> first. The coach can only analyze hands that already exist in your saved hand list.
+          </p>
+        </div>
+      )}
 
       {sortedHands.length === 0 ? (
         <p className="text-sm text-slate-400">Save at least one hand to start coaching.</p>
       ) : (
         <>
           <label className="block text-sm font-medium text-slate-600 mb-1">Hand to analyze</label>
+          <p className="text-xs text-slate-500 mb-2">
+            Newly entered hands will not appear here until you save them.
+          </p>
           <select
             value={selectedHandId}
             onChange={(event) => setSelectedHandId(event.target.value)}
@@ -258,6 +361,20 @@ export function CoachPanel({ hands }) {
                           {entry.meta.truncatedHistory ? ` · last ${entry.meta.historyWindowUsed} messages` : ''}
                           {entry.meta.responseMode ? ` · ${entry.meta.responseMode}` : ''}
                         </p>
+                        {entry.meta.timings?.providerMs != null && (
+                          <p>
+                            AI time: {formatDurationMs(entry.meta.timings.providerMs)}. Total:{' '}
+                            {formatDurationMs(entry.meta.timings.totalMs)}.
+                          </p>
+                        )}
+                        <PlannedOrderDisclosure
+                          plannedOrder={entry.meta.modelSelection?.plannedOrder}
+                          strategy={entry.meta.modelSelection?.strategy}
+                          tone="slate"
+                        />
+                        {entry.meta.modelSelection?.stopReason && (
+                          <p>Stop reason: {entry.meta.modelSelection.stopReason.replace(/_/g, ' ')}</p>
+                        )}
                         {Array.isArray(entry.meta.failedModelAttempts) && entry.meta.failedModelAttempts.length > 0 && (
                           <p>
                             Fallback attempts:{' '}
@@ -274,6 +391,26 @@ export function CoachPanel({ hands }) {
                         {entry.meta.attemptSummary && entry.meta.attemptSummary !== 'none' && (
                           <p>Attempt summary: {entry.meta.attemptSummary}</p>
                         )}
+                        {Array.isArray(entry.meta.attempts) && entry.meta.attempts.length > 0 && (
+                          <div className="rounded-md border border-slate-200 bg-slate-50 px-2 py-2">
+                            <p className="text-[11px] font-medium text-slate-700">Attempt timeline</p>
+                            <div className="mt-1 space-y-1">
+                              {entry.meta.attempts.map((attempt) => (
+                                <div
+                                  key={`${entry.id}-${attempt.pass}-${attempt.attemptIndex || attempt.model}`}
+                                  className="flex items-center justify-between gap-3 text-[11px] text-slate-600"
+                                >
+                                  <span>
+                                    {attempt.pass === 'repair' ? 'Repair ' : ''}
+                                    {attempt.attemptIndex ? `${attempt.attemptIndex}. ` : ''}
+                                    {attempt.model || 'Unknown model'} · {coachAttemptStatusLabel(attempt)}
+                                  </span>
+                                  <span>{coachAttemptDurationLabel(attempt, coachDiagnosticsNowMs) || '...'}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -281,6 +418,66 @@ export function CoachPanel({ hands }) {
               })
             )}
           </div>
+
+          {(isSubmitting || coachDiagnostics.attempts.length > 0 || coachDiagnostics.finalResponse) && (
+            <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3">
+              <p className="text-xs font-medium text-emerald-800">
+                {isSubmitting ? 'Coach request diagnostics' : 'Last coach request diagnostics'}
+              </p>
+              <div className="mt-1 space-y-1 text-xs text-emerald-700">
+                <PlannedOrderDisclosure
+                  plannedOrder={coachDiagnostics.plannedOrder}
+                  strategy={coachDiagnostics.strategy}
+                />
+                {isSubmitting && coachDiagnostics.totalModels > 0 && (
+                  <p>
+                    Coach running: {completedAttemptCount} of {coachDiagnostics.totalModels} attempts finished.
+                  </p>
+                )}
+                {coachDiagnostics.repairStarted && (
+                  <p>Repair retry started after invalid output from the first pass.</p>
+                )}
+                {coachDiagnostics.finalResponse?.meta?.timings?.providerMs != null && (
+                  <p>
+                    AI time: {formatDurationMs(coachDiagnostics.finalResponse.meta.timings.providerMs)}. Total:{' '}
+                    {formatDurationMs(coachDiagnostics.finalResponse.meta.timings.totalMs)}.
+                  </p>
+                )}
+                {coachDiagnostics.finalResponse?.meta?.model && (
+                  <p>
+                    Final model: {coachDiagnostics.finalResponse.meta.model}
+                    {coachDiagnostics.finalResponse.meta.fallbackUsed ? ' (fallback used)' : ''}
+                  </p>
+                )}
+                {coachDiagnostics.finalResponse?.meta?.modelSelection?.stopReason && (
+                  <p>
+                    Stop reason:{' '}
+                    {coachDiagnostics.finalResponse.meta.modelSelection.stopReason.replace(/_/g, ' ')}
+                  </p>
+                )}
+              </div>
+              {coachDiagnostics.attempts.length > 0 && (
+                <div className="mt-2 rounded-md border border-white/70 bg-white/70 px-2 py-2">
+                  <p className="text-[11px] font-medium text-slate-700">Attempt timeline</p>
+                  <div className="mt-1 space-y-1">
+                    {coachDiagnostics.attempts.map((attempt) => (
+                      <div
+                        key={`${selectedHandId}-${attempt.pass}-${attempt.attemptIndex || attempt.model}-${attempt.state}`}
+                        className="flex items-center justify-between gap-3 text-[11px] text-slate-600"
+                      >
+                        <span>
+                          {attempt.pass === 'repair' ? 'Repair ' : ''}
+                          {attempt.attemptIndex ? `${attempt.attemptIndex}. ` : ''}
+                          {attempt.model || 'Unknown model'} · {coachAttemptStatusLabel(attempt)}
+                        </span>
+                        <span>{coachAttemptDurationLabel(attempt, coachDiagnosticsNowMs) || '...'}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="mt-4 space-y-2">
             <label className="block text-sm font-medium text-slate-600">Prompt for coach</label>
@@ -295,13 +492,24 @@ export function CoachPanel({ hands }) {
             />
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-slate-500">{draftMessage.length}/2000</p>
-              <button
-                type="submit"
-                disabled={isSubmitting || !selectedHand}
-                className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isSubmitting ? 'Coaching…' : 'Get coaching'}
-              </button>
+              <div className="flex items-center gap-2">
+                {isSubmitting && (
+                  <button
+                    type="button"
+                    onClick={handleStopCoach}
+                    className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 transition"
+                  >
+                    Stop
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  disabled={isSubmitting || !selectedHand}
+                  className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSubmitting ? 'Coaching…' : 'Get coaching'}
+                </button>
+              </div>
             </div>
           </form>
 

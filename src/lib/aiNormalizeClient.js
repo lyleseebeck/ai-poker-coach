@@ -32,6 +32,50 @@ function normalizeMeta(value) {
     provider: value.provider ? String(value.provider) : null,
     model: value.model ? String(value.model) : null,
     fallbackUsed: Boolean(value.fallbackUsed),
+    resultSource: value.resultSource ? String(value.resultSource) : null,
+    attemptSummary: value.attemptSummary ? String(value.attemptSummary) : null,
+    failedModelAttempts: Array.isArray(value.failedModelAttempts)
+      ? value.failedModelAttempts.map((entry) => ({
+          model: entry?.model ? String(entry.model) : null,
+          reason: entry?.reason ? String(entry.reason) : null,
+          status: Number.isFinite(Number(entry?.status)) ? Number(entry.status) : null,
+          durationMs: Number.isFinite(Number(entry?.durationMs)) ? Number(entry.durationMs) : null,
+        }))
+      : [],
+    attempts: Array.isArray(value.attempts)
+      ? value.attempts.map((entry) => ({
+          model: entry?.model ? String(entry.model) : null,
+          state: entry?.state ? String(entry.state) : null,
+          reason: entry?.reason ? String(entry.reason) : null,
+          status: Number.isFinite(Number(entry?.status)) ? Number(entry.status) : null,
+          durationMs: Number.isFinite(Number(entry?.durationMs)) ? Number(entry.durationMs) : null,
+          overallConfidence:
+            Number.isFinite(Number(entry?.overallConfidence)) ? Number(entry.overallConfidence) : null,
+          missingRequiredCount:
+            Number.isFinite(Number(entry?.missingRequiredCount)) ? Number(entry.missingRequiredCount) : null,
+          attemptIndex: Number.isFinite(Number(entry?.attemptIndex)) ? Number(entry.attemptIndex) : null,
+        }))
+      : [],
+    timings:
+      value.timings && typeof value.timings === 'object' && !Array.isArray(value.timings)
+        ? {
+            deterministicMs:
+              Number.isFinite(Number(value.timings.deterministicMs)) ? Number(value.timings.deterministicMs) : null,
+            providerMs: Number.isFinite(Number(value.timings.providerMs)) ? Number(value.timings.providerMs) : null,
+            totalMs: Number.isFinite(Number(value.timings.totalMs)) ? Number(value.timings.totalMs) : null,
+          }
+        : null,
+    modelSelection:
+      value.modelSelection && typeof value.modelSelection === 'object' && !Array.isArray(value.modelSelection)
+        ? {
+            scope: value.modelSelection.scope ? String(value.modelSelection.scope) : null,
+            strategy: value.modelSelection.strategy ? String(value.modelSelection.strategy) : null,
+            plannedOrder: Array.isArray(value.modelSelection.plannedOrder)
+              ? value.modelSelection.plannedOrder.map((item) => String(item))
+              : [],
+            stopReason: value.modelSelection.stopReason ? String(value.modelSelection.stopReason) : null,
+          }
+        : null,
   };
 }
 
@@ -55,7 +99,7 @@ function extractErrorMessage(status, statusText, payloadText) {
   return `AI normalize request failed: ${detail}`;
 }
 
-function normalizeAiResponse(raw) {
+export function normalizeAiResponse(raw) {
   const body = ensureObject(raw, 'AI response');
   const parsedFields = ensureObject(body.parsedFields || {}, 'parsedFields');
 

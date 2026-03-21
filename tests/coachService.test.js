@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { coachHand } from '../server/coach/coachService.js';
+import { coachHand, coachHandStream } from '../server/coach/coachService.js';
 import { HISTORY_WINDOW_SIZE } from '../server/coach/coachSchema.js';
 import { createCoachError } from '../server/coach/errors.js';
 
@@ -335,4 +335,73 @@ test('coachHand exposes provider attempt diagnostics for exhausted-provider erro
       Array.isArray(error?.details?.failedModelAttempts) &&
       typeof error?.details?.attemptSummary === 'string'
   );
+});
+
+test('coachHandStream emits live attempt progress and a final result', async () => {
+  const events = [];
+  const provider = {
+    name: 'openrouter',
+    async generate({ onAttempt }) {
+      await onAttempt?.({
+        phase: 'selection_plan',
+        scope: 'coach',
+        strategy: 'ranked',
+        plannedOrder: ['provider/model-a:free', 'provider/model-b:free'],
+        totalModels: 2,
+        pass: 'initial',
+      });
+      await onAttempt?.({
+        phase: 'attempt_started',
+        model: 'provider/model-a:free',
+        attemptIndex: 1,
+        totalModels: 2,
+        pass: 'initial',
+      });
+      await onAttempt?.({
+        phase: 'attempt_completed',
+        model: 'provider/model-a:free',
+        state: 'completed',
+        durationMs: 18,
+        attemptIndex: 1,
+        totalModels: 2,
+        pass: 'initial',
+      });
+      return {
+        provider: 'openrouter',
+        model: 'provider/model-a:free',
+        fallbackUsed: false,
+        attempts: [
+          {
+            model: 'provider/model-a:free',
+            state: 'completed',
+            durationMs: 18,
+            attemptIndex: 1,
+            totalModels: 2,
+            pass: 'initial',
+          },
+        ],
+        selectionPlan: {
+          scope: 'coach',
+          strategy: 'ranked',
+          plannedOrder: ['provider/model-a:free', 'provider/model-b:free'],
+        },
+        stopReason: 'first_valid_candidate',
+        content: makeInitialModelOutput(),
+      };
+    },
+  };
+
+  const response = await coachHandStream(makePayload([]), {
+    provider,
+    writeEvent: async (event) => {
+      events.push(event);
+    },
+  });
+
+  assert.equal(events[0].type, 'selection_plan');
+  assert.equal(events[1].type, 'attempt_started');
+  assert.equal(events[2].type, 'attempt_completed');
+  assert.equal(events[events.length - 1].type, 'final_result');
+  assert.equal(response.meta.modelSelection.strategy, 'ranked');
+  assert.equal(response.meta.attempts.length, 1);
 });

@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {
   applyConflictResolution,
   applyParsedFieldsToSnapshot,
+  buildParsedFieldValueMap,
   buildNormalizeSnapshot,
+  preferConflictSource,
   unresolvedConflictCount,
 } from '../src/lib/normalizeMerge.js';
 
@@ -123,4 +125,58 @@ test('unresolvedConflictCount ignores resolved conflicts', () => {
     { id: 'c', resolution: 'use_ai' },
   ];
   assert.equal(unresolvedConflictCount(conflicts), 1);
+});
+
+test('buildParsedFieldValueMap normalizes parser values by conflict id', () => {
+  const values = buildParsedFieldValueMap({
+    hero: { position: 'btn', cards: ['jd', 'jc'] },
+    board: { didReachFlop: true, cards: ['th', '9h', '2c', 'ks'] },
+    heroStreetSummary: {
+      preflop: { action: 'raise', amountBb: 2.5 },
+      flop: { action: 'call', amountBb: 4.29, facingAmountBb: 4.29 },
+    },
+    result: { netBb: -6.79 },
+  });
+
+  assert.equal(values['hero.position'], 'BTN');
+  assert.equal(values['hero.card1'], 'Jd');
+  assert.equal(values['hero.card2'], 'Jc');
+  assert.equal(values['board.flop1'], 'Th');
+  assert.equal(values['board.turn'], 'Ks');
+  assert.equal(values['heroStreetSummary.preflop.amountBb'], '2.5');
+  assert.equal(values['heroStreetSummary.flop.facingAmountBb'], '4.29');
+  assert.equal(values['result.netBb'], '-6.79');
+});
+
+test('preferConflictSource auto-keeps conflicts that match parser-filled values', () => {
+  const conflicts = [
+    {
+      id: 'heroStreetSummary.preflop.amountBb',
+      type: 'number',
+      currentValue: '2.5',
+      suggestedValue: '8',
+      resolution: null,
+    },
+    {
+      id: 'result.netBb',
+      type: 'number',
+      currentValue: '-20',
+      suggestedValue: '-6.79',
+      resolution: null,
+    },
+  ];
+
+  const next = preferConflictSource(
+    conflicts,
+    {
+      'heroStreetSummary.preflop.amountBb': '2.5',
+      'result.netBb': '-6.79',
+    },
+    'parser'
+  );
+
+  assert.equal(next[0].currentSource, 'parser');
+  assert.equal(next[0].resolution, 'keep');
+  assert.equal(next[1].currentSource, undefined);
+  assert.equal(next[1].resolution, null);
 });
