@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { enforceIpRateLimit } from '../server/rateLimit/upstashRateLimit.js';
-import { handleCoachHandRequest } from '../server/coach/http.js';
+import { handleCoachHandRequest, handleCoachHandStreamRequest } from '../server/coach/http.js';
 import { handleHandNormalizeRequest, handleHandNormalizeStreamRequest } from '../server/normalize/http.js';
 
 function makeReq({ method = 'POST', body = {}, headers = {} } = {}) {
@@ -198,5 +198,47 @@ test('handleHandNormalizeStreamRequest writes NDJSON events', async () => {
 
   assert.equal(res.getHeader('content-type'), 'application/x-ndjson; charset=utf-8');
   assert.match(res.payload, /"type":"deterministic_started"/);
+  assert.match(res.payload, /"type":"final_result"/);
+});
+
+test('handleCoachHandStreamRequest writes NDJSON events', async () => {
+  const res = makeRes();
+
+  await handleCoachHandStreamRequest(
+    makeReq({
+      body: {
+        handId: 'h1',
+        hand: { schemaVersion: 2 },
+        message: 'help',
+      },
+    }),
+    res,
+    {
+      rateLimitImpl: async () => ({ allowed: true }),
+      coachHandStreamImpl: async (_body, options = {}) => {
+        await options.writeEvent?.({ type: 'selection_plan', plannedOrder: ['provider/model-a:free'] });
+        await options.writeEvent?.({
+          type: 'final_result',
+          response: {
+            assistant: { content: 'ok', followupHighlights: [] },
+            meta: {
+              provider: 'openrouter',
+              model: 'provider/model-a:free',
+              fallbackUsed: false,
+              historyWindowUsed: 8,
+              truncatedHistory: false,
+              failedModelAttempts: [],
+              attemptSummary: 'successx1',
+              responseMode: 'followup',
+            },
+            warnings: [],
+          },
+        });
+      },
+    }
+  );
+
+  assert.equal(res.getHeader('content-type'), 'application/x-ndjson; charset=utf-8');
+  assert.match(res.payload, /"type":"selection_plan"/);
   assert.match(res.payload, /"type":"final_result"/);
 });

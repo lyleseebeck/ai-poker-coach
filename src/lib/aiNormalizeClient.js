@@ -65,6 +65,17 @@ function normalizeMeta(value) {
             totalMs: Number.isFinite(Number(value.timings.totalMs)) ? Number(value.timings.totalMs) : null,
           }
         : null,
+    modelSelection:
+      value.modelSelection && typeof value.modelSelection === 'object' && !Array.isArray(value.modelSelection)
+        ? {
+            scope: value.modelSelection.scope ? String(value.modelSelection.scope) : null,
+            strategy: value.modelSelection.strategy ? String(value.modelSelection.strategy) : null,
+            plannedOrder: Array.isArray(value.modelSelection.plannedOrder)
+              ? value.modelSelection.plannedOrder.map((item) => String(item))
+              : [],
+            stopReason: value.modelSelection.stopReason ? String(value.modelSelection.stopReason) : null,
+          }
+        : null,
   };
 }
 

@@ -20,6 +20,9 @@ export function createNormalizeDiagnosticsState() {
     totalMs: null,
     providerMs: null,
     totalModels: 0,
+    plannedOrder: [],
+    strategy: null,
+    stopReason: null,
     attempts: [],
     provisionalResponse: null,
     provisionalModel: null,
@@ -65,6 +68,14 @@ export function reduceNormalizeDiagnostics(state, event, options = {}) {
         phase: 'deterministic',
         startedAtMs: nowMs,
         errorMessage: '',
+      };
+    case 'selection_plan':
+      return {
+        ...current,
+        phase: 'ai_running',
+        totalModels: event.totalModels ?? current.totalModels,
+        plannedOrder: Array.isArray(event.plannedOrder) ? event.plannedOrder : current.plannedOrder,
+        strategy: event.strategy || current.strategy,
       };
     case 'deterministic_completed':
       return {
@@ -116,6 +127,7 @@ export function reduceNormalizeDiagnostics(state, event, options = {}) {
         totalMs: timings?.totalMs ?? current.totalMs,
         providerMs: timings?.providerMs ?? current.providerMs,
         deterministicMs: timings?.deterministicMs ?? current.deterministicMs,
+        stopReason: event.response?.meta?.modelSelection?.stopReason ?? current.stopReason,
         attempts: Array.isArray(event.response?.meta?.attempts) && event.response.meta.attempts.length > 0
           ? event.response.meta.attempts.map(cloneAttempt)
           : current.attempts,

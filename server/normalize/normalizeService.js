@@ -514,6 +514,20 @@ function sanitizeAttemptRecord(attempt) {
     missingRequiredCount:
       Number.isFinite(Number(attempt?.missingRequiredCount)) ? Math.max(0, Math.round(Number(attempt.missingRequiredCount))) : null,
     attemptIndex: Number.isFinite(Number(attempt?.attemptIndex)) ? Math.max(1, Math.round(Number(attempt.attemptIndex))) : null,
+    totalModels: Number.isFinite(Number(attempt?.totalModels)) ? Math.max(1, Math.round(Number(attempt.totalModels))) : null,
+  };
+}
+
+function sanitizeModelSelection(selection, stopReason = null) {
+  const plannedOrder = Array.isArray(selection?.plannedOrder)
+    ? selection.plannedOrder.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+
+  return {
+    scope: selection?.scope ? String(selection.scope) : 'normalize',
+    strategy: selection?.strategy ? String(selection.strategy) : 'static',
+    plannedOrder,
+    stopReason: stopReason ? String(stopReason) : null,
   };
 }
 
@@ -552,6 +566,7 @@ function withNormalizeDiagnostics(response, options = {}) {
       attemptSummary: summarizeNormalizeAttempts(attempts),
       failedModelAttempts: toFailedNormalizeAttempts(attempts),
       attempts,
+      modelSelection: sanitizeModelSelection(options.modelSelection, options.stopReason),
       timings: buildNormalizeTimings(options.timings),
     },
   };
@@ -574,6 +589,13 @@ function isBetterCandidate(left, right) {
     return left.overallConfidence > right.overallConfidence;
   }
   return left.attemptIndex < right.attemptIndex;
+}
+
+function shouldEarlyAcceptNormalizeCandidate(score, candidateConfidence = null) {
+  const confidence = Number.isFinite(Number(candidateConfidence))
+    ? Math.max(score.overallConfidence, Number(candidateConfidence))
+    : score.overallConfidence;
+  return score.missingRequiredCount === 0 && confidence >= 0.85;
 }
 
 async function emitNormalizeEvent(writer, event) {
@@ -619,6 +641,7 @@ export async function normalizeHandFromText(payload, options = {}) {
     generation = await provider.generate({
       messages,
       timeoutMs,
+      requestKind: 'normalize',
       validateContent: (content) => {
         const parsed = parseNormalizeModelJson(content);
         validateNormalizeModelPayload(parsed);
@@ -628,6 +651,8 @@ export async function normalizeHandFromText(payload, options = {}) {
   } catch {
     return withNormalizeDiagnostics(finalizeBaselineResponse(baseline, request, provider?.name || providerName), {
       attempts: Array.isArray(generation?.attempts) ? generation.attempts : [],
+      modelSelection: generation?.selectionPlan,
+      stopReason: generation?.stopReason,
       resultSource: 'deterministic_fallback',
       timings: {
         deterministicMs,
@@ -650,6 +675,8 @@ export async function normalizeHandFromText(payload, options = {}) {
       ),
       {
         attempts: Array.isArray(generation?.attempts) ? generation.attempts : [],
+        modelSelection: generation?.selectionPlan,
+        stopReason: generation?.stopReason,
         resultSource: 'model_merged',
         timings: {
           deterministicMs,
@@ -661,6 +688,8 @@ export async function normalizeHandFromText(payload, options = {}) {
   } catch {
     return withNormalizeDiagnostics(finalizeBaselineResponse(baseline, request, provider?.name || providerName), {
       attempts: Array.isArray(generation?.attempts) ? generation.attempts : [],
+      modelSelection: generation?.selectionPlan,
+      stopReason: generation?.stopReason,
       resultSource: 'deterministic_fallback',
       timings: {
         deterministicMs,
@@ -732,17 +761,32 @@ export async function normalizeHandFromTextStream(payload, options = {}) {
   let provisionalEmitted = false;
   let bestCandidate = null;
   let bestScore = null;
+  let modelSelection = null;
+  let stopReason = null;
 
   try {
     const providerStartedAtMs = Date.now();
     await provider.generateWithProgress({
       messages,
       timeoutMs,
+      requestKind: 'normalize',
       validateContent: (content) => {
         const parsed = parseNormalizeModelJson(content);
         validateNormalizeModelPayload(parsed);
       },
       onAttempt: async (event) => {
+        if (event?.phase === 'selection_plan') {
+          modelSelection = sanitizeModelSelection(event);
+          await emitNormalizeEvent(writeEvent, {
+            type: 'selection_plan',
+            scope: modelSelection.scope,
+            strategy: modelSelection.strategy,
+            plannedOrder: modelSelection.plannedOrder,
+            totalModels: event.totalModels,
+          });
+          return null;
+        }
+
         if (event?.phase === 'attempt_started') {
           await emitNormalizeEvent(writeEvent, {
             type: 'attempt_started',
@@ -765,6 +809,7 @@ export async function normalizeHandFromTextStream(payload, options = {}) {
             provider?.name || providerName
           );
           const score = candidateScore(mergedResponse, event.attemptIndex);
+          const candidateConfidence = averageConfidence(modelPayload.confidenceByField || {});
           nextAttempt.overallConfidence = score.overallConfidence;
           nextAttempt.missingRequiredCount = score.missingRequiredCount;
 
@@ -795,6 +840,20 @@ export async function normalizeHandFromTextStream(payload, options = {}) {
             bestScore = score;
             bestCandidate = candidateResponse;
           }
+
+          if (shouldEarlyAcceptNormalizeCandidate(score, candidateConfidence)) {
+            stopReason = 'early_accept_complete_high_confidence';
+            attempts.push(nextAttempt);
+            await emitNormalizeEvent(writeEvent, {
+              type: 'attempt_completed',
+              ...nextAttempt,
+              totalModels: event.totalModels,
+            });
+            return {
+              stop: true,
+              stopReason,
+            };
+          }
         }
 
         attempts.push(nextAttempt);
@@ -813,6 +872,8 @@ export async function normalizeHandFromTextStream(payload, options = {}) {
     });
     const fallback = withNormalizeDiagnostics(finalizeBaselineResponse(baseline, request, provider?.name || providerName), {
       attempts,
+      modelSelection,
+      stopReason,
       resultSource: 'deterministic_fallback',
       timings: {
         deterministicMs,
@@ -820,6 +881,9 @@ export async function normalizeHandFromTextStream(payload, options = {}) {
         totalMs: Date.now() - requestStartedAtMs,
       },
     });
+    if (fallback?.meta?.modelSelection && stopReason && !fallback.meta.modelSelection.stopReason) {
+      fallback.meta.modelSelection.stopReason = stopReason;
+    }
     await emitNormalizeEvent(writeEvent, {
       type: 'final_result',
       provisional: false,
@@ -832,6 +896,8 @@ export async function normalizeHandFromTextStream(payload, options = {}) {
     bestCandidate || finalizeBaselineResponse(baseline, request, provider?.name || providerName),
     {
       attempts,
+      modelSelection,
+      stopReason: stopReason || (bestCandidate ? 'evaluated_ranked_models' : 'exhausted_without_candidate'),
       resultSource: bestCandidate ? 'model_merged' : 'deterministic_fallback',
       timings: {
         deterministicMs,
@@ -840,6 +906,9 @@ export async function normalizeHandFromTextStream(payload, options = {}) {
       },
     }
   );
+  if (finalResponse?.meta?.modelSelection && stopReason && !finalResponse.meta.modelSelection.stopReason) {
+    finalResponse.meta.modelSelection.stopReason = stopReason;
+  }
 
   await emitNormalizeEvent(writeEvent, {
     type: 'final_result',

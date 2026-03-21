@@ -1,4 +1,4 @@
-import { normalizeAiResponse } from './aiNormalizeClient.js';
+import { normalizeCoachResponse } from './coachClient.js';
 
 function parseJsonSafely(text) {
   if (!text) return null;
@@ -14,55 +14,48 @@ function toFiniteNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-export function normalizeNormalizeStreamEvent(raw) {
+export function normalizeCoachStreamEvent(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error('Normalize stream event must be an object.');
+    throw new Error('Coach stream event must be an object.');
   }
 
   const type = raw.type ? String(raw.type) : '';
   if (!type) {
-    throw new Error('Normalize stream event type is required.');
+    throw new Error('Coach stream event type is required.');
   }
 
   const base = {
     type,
-    provisional: Boolean(raw.provisional),
     model: raw.model ? String(raw.model) : null,
     message: raw.message ? String(raw.message) : null,
     attemptIndex: toFiniteNumber(raw.attemptIndex),
     totalModels: toFiniteNumber(raw.totalModels),
     durationMs: toFiniteNumber(raw.durationMs),
-    overallConfidence: toFiniteNumber(raw.overallConfidence),
+    status: toFiniteNumber(raw.status),
+    pass: raw.pass ? String(raw.pass) : 'initial',
   };
 
-  if (Array.isArray(raw.missingRequired)) {
-    base.missingRequired = raw.missingRequired.map((item) => String(item));
-  }
-  if (raw.reason) base.reason = String(raw.reason);
-  if (toFiniteNumber(raw.status) != null) base.status = toFiniteNumber(raw.status);
   if (raw.state) base.state = String(raw.state);
-  if (toFiniteNumber(raw.missingRequiredCount) != null) {
-    base.missingRequiredCount = toFiniteNumber(raw.missingRequiredCount);
-  }
+  if (raw.reason) base.reason = String(raw.reason);
   if (raw.scope) base.scope = String(raw.scope);
   if (raw.strategy) base.strategy = String(raw.strategy);
   if (Array.isArray(raw.plannedOrder)) {
     base.plannedOrder = raw.plannedOrder.map((item) => String(item));
   }
   if (raw.response) {
-    base.response = normalizeAiResponse(raw.response);
+    base.response = normalizeCoachResponse(raw.response);
   }
 
   return base;
 }
 
-export async function streamNormalizeHandFromText(payload, options = {}) {
+export async function streamCoachHand(payload, options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (typeof fetchImpl !== 'function') {
-    throw new Error('Streaming normalize requires fetch.');
+    throw new Error('Streaming coach requires fetch.');
   }
 
-  const response = await fetchImpl('/api/hand-normalize/stream', {
+  const response = await fetchImpl('/api/coach-hand/stream', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -80,11 +73,11 @@ export async function streamNormalizeHandFromText(payload, options = {}) {
       payloadJson?.message ||
       text ||
       `${response.status} ${response.statusText}`;
-    throw new Error(`AI normalize stream failed: ${detail}`);
+    throw new Error(`Coach request failed: ${detail}`);
   }
 
   if (!response.body || typeof response.body.getReader !== 'function') {
-    throw new Error('AI normalize stream failed: response body was not streamable.');
+    throw new Error('Coach request failed: response body was not streamable.');
   }
 
   const reader = response.body.getReader();
@@ -103,14 +96,17 @@ export async function streamNormalizeHandFromText(payload, options = {}) {
       if (line) {
         const parsed = parseJsonSafely(line);
         if (!parsed) {
-          throw new Error('AI normalize stream failed: received invalid NDJSON event.');
+          throw new Error('Coach request failed: received invalid NDJSON event.');
         }
-        const event = normalizeNormalizeStreamEvent(parsed);
+        const event = normalizeCoachStreamEvent(parsed);
         if (typeof options.onEvent === 'function') {
           await options.onEvent(event);
         }
         if (event.type === 'final_result' && event.response) {
           finalResponse = event.response;
+        }
+        if (event.type === 'error' && event.message) {
+          throw new Error(`Coach request failed: ${event.message}`);
         }
       }
       newlineIndex = buffer.indexOf('\n');
@@ -120,7 +116,7 @@ export async function streamNormalizeHandFromText(payload, options = {}) {
   }
 
   if (!finalResponse) {
-    throw new Error('AI normalize stream failed: stream ended before final_result.');
+    throw new Error('Coach request failed: stream ended before final_result.');
   }
 
   return finalResponse;

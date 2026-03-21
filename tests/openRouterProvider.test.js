@@ -24,6 +24,19 @@ function makeChoiceContent(content) {
   };
 }
 
+function staticRankingStore(plannedOrder) {
+  return {
+    async getSelectionPlan() {
+      return {
+        scope: 'coach',
+        strategy: 'static',
+        plannedOrder,
+      };
+    },
+    async recordAttempt() {},
+  };
+}
+
 test('openRouter provider falls back to next free model on retryable status', async () => {
   let callCount = 0;
   const fetchMock = async () => {
@@ -37,6 +50,7 @@ test('openRouter provider falls back to next free model on retryable status', as
   const provider = createOpenRouterProvider({
     apiKey: 'test-key',
     models: ['provider/model-a:free', 'provider/model-b:free'],
+    modelRankingStore: staticRankingStore(['provider/model-a:free', 'provider/model-b:free']),
     fetchImpl: fetchMock,
   });
 
@@ -65,6 +79,7 @@ test('openRouter provider falls back when first model returns invalid output', a
   const provider = createOpenRouterProvider({
     apiKey: 'test-key',
     models: ['provider/model-a:free', 'provider/model-b:free'],
+    modelRankingStore: staticRankingStore(['provider/model-a:free', 'provider/model-b:free']),
     fetchImpl: fetchMock,
   });
 
@@ -90,6 +105,7 @@ test('openRouter provider fails fast on auth error', async () => {
   const provider = createOpenRouterProvider({
     apiKey: 'test-key',
     models: ['provider/model-a:free', 'provider/model-b:free'],
+    modelRankingStore: staticRankingStore(['provider/model-a:free', 'provider/model-b:free']),
     fetchImpl: fetchMock,
   });
 
@@ -141,4 +157,44 @@ test('openRouter provider uses default free fallback models when COACH_OPENROUTE
   });
 
   assert.deepEqual(provider.models, DEFAULT_OPENROUTER_FREE_MODEL_FALLBACKS);
+});
+
+test('openRouter provider uses ranked planned order and emits selection events', async () => {
+  const seenModels = [];
+  const seenPhases = [];
+  const provider = createOpenRouterProvider({
+    apiKey: 'test-key',
+    models: ['provider/model-a:free', 'provider/model-b:free'],
+    modelRankingStore: {
+      async getSelectionPlan() {
+        return {
+          scope: 'normalize',
+          strategy: 'ranked',
+          plannedOrder: ['provider/model-b:free', 'provider/model-a:free'],
+        };
+      },
+      async recordAttempt() {},
+    },
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      seenModels.push(body.model);
+      return makeResponse(200, makeChoiceContent('{"ok":true}'));
+    },
+  });
+
+  const out = await provider.generate({
+    messages: [{ role: 'user', content: 'hello' }],
+    requestKind: 'normalize',
+    validateContent: (text) => {
+      JSON.parse(text);
+    },
+    onAttempt: async (event) => {
+      seenPhases.push(event.phase);
+    },
+  });
+
+  assert.equal(out.model, 'provider/model-b:free');
+  assert.equal(out.selectionPlan.strategy, 'ranked');
+  assert.deepEqual(seenModels, ['provider/model-b:free']);
+  assert.deepEqual(seenPhases, ['selection_plan', 'attempt_started', 'attempt_completed']);
 });

@@ -217,11 +217,23 @@ test('normalizeHandFromTextStream emits provisional result and keeps checking la
           model: 'provider/model-c:free',
           content: JSON.stringify({
             parsedFields: {
-              hero: { position: 'BTN', handCode: 'AA' },
+              hero: { position: 'BTN', handCode: 'AA', cards: ['As', 'Ah'] },
+              board: { didReachFlop: true },
+              heroStreetSummary: {
+                preflop: { action: 'raise', amountBb: 9 },
+                flop: { action: 'call', facingAmountBb: 4.5 },
+                turn: { action: 'fold', facingAmountBb: 24 },
+              },
               result: { netBb: -25 },
             },
             confidenceByField: {
               heroPosition: 0.95,
+              heroCards: 0.95,
+              heroHandCode: 0.95,
+              boardDidReachFlop: 0.95,
+              streetPreflop: 0.95,
+              streetFlop: 0.95,
+              streetTurn: 0.95,
               result_netBb: 0.95,
             },
             missingRequired: [],
@@ -249,4 +261,113 @@ test('normalizeHandFromTextStream emits provisional result and keeps checking la
   assert.equal(response.meta.resultSource, 'model_merged');
   assert.equal(Array.isArray(response.meta.attempts), true);
   assert.equal(response.meta.attempts.length, 3);
+});
+
+test('normalizeHandFromTextStream stops early after a strong complete candidate', async () => {
+  const events = [];
+  let secondAttemptStarted = false;
+  const payload = makePayload({
+    manualActionText: 'button opens, flop call, turn fold',
+    deterministicParse: {
+      parsedFields: {
+        hero: {
+          position: 'BTN',
+          handCode: 'AA',
+        },
+        board: {
+          didReachFlop: true,
+        },
+        heroStreetSummary: {
+          preflop: { action: 'raise', amountBb: 9 },
+          flop: { action: 'call', facingAmountBb: 4.5 },
+          turn: { action: 'fold', facingAmountBb: 24 },
+        },
+        result: {
+          netBb: -25,
+        },
+      },
+      confidence: {
+        byField: {
+          heroPosition: 0.95,
+          heroHandCode: 0.95,
+          boardDidReachFlop: 0.95,
+          streetPreflop: 0.95,
+          streetFlop: 0.95,
+          streetTurn: 0.95,
+          result_netBb: 0.95,
+        },
+      },
+      missingRequired: ['hero.cards'],
+    },
+  });
+  const provider = {
+    name: 'openrouter',
+    async generateWithProgress({ onAttempt }) {
+      await onAttempt({
+        phase: 'selection_plan',
+        scope: 'normalize',
+        strategy: 'ranked',
+        plannedOrder: ['provider/model-a:free', 'provider/model-b:free'],
+        totalModels: 2,
+      });
+      await onAttempt({
+        phase: 'attempt_started',
+        model: 'provider/model-a:free',
+        attemptIndex: 1,
+        totalModels: 2,
+      });
+      const stop = await onAttempt({
+        phase: 'attempt_completed',
+        model: 'provider/model-a:free',
+        state: 'completed',
+        durationMs: 12,
+        attemptIndex: 1,
+        totalModels: 2,
+        candidate: {
+          provider: 'openrouter',
+          model: 'provider/model-a:free',
+          content: JSON.stringify({
+            parsedFields: {
+              hero: { position: 'BTN', handCode: 'AA', cards: ['As', 'Ah'] },
+              board: { didReachFlop: true },
+              heroStreetSummary: {
+                preflop: { action: 'raise', amountBb: 9 },
+                flop: { action: 'call', facingAmountBb: 4.5 },
+                turn: { action: 'fold', facingAmountBb: 24 },
+              },
+              result: { netBb: -25 },
+            },
+            confidenceByField: {
+              heroPosition: 0.95,
+              heroCards: 0.95,
+              heroHandCode: 0.95,
+              boardDidReachFlop: 0.95,
+              streetPreflop: 0.95,
+              streetFlop: 0.95,
+              streetTurn: 0.95,
+              result_netBb: 0.95,
+            },
+            missingRequired: [],
+            needsUserInput: [],
+          }),
+          fallbackUsed: false,
+        },
+      });
+      assert.equal(stop?.stop, true);
+      assert.equal(stop?.stopReason, 'early_accept_complete_high_confidence');
+      secondAttemptStarted = false;
+    },
+  };
+
+  const response = await normalizeHandFromTextStream(payload, {
+    provider,
+    writeEvent: async (event) => {
+      events.push(event);
+    },
+  });
+
+  assert.equal(secondAttemptStarted, false);
+  assert.equal(events.some((event) => event.type === 'selection_plan'), true);
+  assert.equal(response.meta.modelSelection.stopReason, 'early_accept_complete_high_confidence');
+  assert.equal(response.meta.attempts.length, 1);
 });

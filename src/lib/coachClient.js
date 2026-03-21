@@ -127,6 +127,37 @@ function normalizeFailedModelAttempts(value, label) {
   });
 }
 
+function normalizeCoachAttempts(value, label) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array.`);
+  }
+  return value.map((item, index) => {
+    const entry = ensureObject(item, `${label}[${index}]`);
+    return {
+      model: entry.model ? String(entry.model) : null,
+      state: entry.state ? String(entry.state) : null,
+      reason: entry.reason ? String(entry.reason) : null,
+      status: Number.isFinite(Number(entry.status)) ? Number(entry.status) : null,
+      durationMs: Number.isFinite(Number(entry.durationMs)) ? Number(entry.durationMs) : null,
+      attemptIndex: Number.isFinite(Number(entry.attemptIndex)) ? Number(entry.attemptIndex) : null,
+      totalModels: Number.isFinite(Number(entry.totalModels)) ? Number(entry.totalModels) : null,
+      pass: entry.pass ? String(entry.pass) : 'initial',
+    };
+  });
+}
+
+function normalizeModelSelection(value) {
+  if (value == null) return null;
+  const selection = ensureObject(value, 'meta.modelSelection');
+  return {
+    scope: selection.scope ? String(selection.scope) : null,
+    strategy: selection.strategy ? String(selection.strategy) : null,
+    plannedOrder: Array.isArray(selection.plannedOrder) ? selection.plannedOrder.map((item) => String(item)) : [],
+    stopReason: selection.stopReason ? String(selection.stopReason) : null,
+  };
+}
+
 export function normalizeCoachResponse(raw) {
   const body = ensureObject(raw, 'Coach response');
   const assistant = ensureObject(body.assistant, 'assistant');
@@ -216,6 +247,15 @@ export function normalizeCoachResponse(raw) {
       historyWindowUsed: Number(meta.historyWindowUsed) || 0,
       truncatedHistory: Boolean(meta.truncatedHistory),
       failedModelAttempts: normalizeFailedModelAttempts(meta.failedModelAttempts, 'meta.failedModelAttempts'),
+      attempts: normalizeCoachAttempts(meta.attempts, 'meta.attempts'),
+      modelSelection: normalizeModelSelection(meta.modelSelection),
+      timings:
+        meta.timings && typeof meta.timings === 'object' && !Array.isArray(meta.timings)
+          ? {
+              totalMs: Number.isFinite(Number(meta.timings.totalMs)) ? Number(meta.timings.totalMs) : null,
+              providerMs: Number.isFinite(Number(meta.timings.providerMs)) ? Number(meta.timings.providerMs) : null,
+            }
+          : null,
       attemptSummary: ensureString(String(meta.attemptSummary || 'none'), 'meta.attemptSummary'),
       responseMode: inferredResponseMode,
     },

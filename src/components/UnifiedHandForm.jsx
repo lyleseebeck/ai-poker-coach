@@ -1705,6 +1705,12 @@ export function UnifiedHandForm({
                         AI fallback running: {completedAttemptCount} of {parseDiagnostics.totalModels} attempts finished.
                       </p>
                     )}
+                    {parseDiagnostics.plannedOrder.length > 0 && (
+                      <p>
+                        Planned order ({parseDiagnostics.strategy || 'static'}):{' '}
+                        {parseDiagnostics.plannedOrder.join(' -> ')}
+                      </p>
+                    )}
                     {aiProposal?.meta?.timings?.providerMs != null && (
                       <p>
                         AI time: {formatDurationMs(aiProposal.meta.timings.providerMs)}. Total:{' '}
@@ -1719,6 +1725,9 @@ export function UnifiedHandForm({
                     )}
                     {aiProposal?.meta?.attemptSummary && aiProposal.meta.attemptSummary !== 'none' && (
                       <p>Attempt summary: {aiProposal.meta.attemptSummary}</p>
+                    )}
+                    {aiProposal?.meta?.modelSelection?.stopReason && (
+                      <p>Stop reason: {aiProposal.meta.modelSelection.stopReason.replace(/_/g, ' ')}</p>
                     )}
                     {aiStatus === 'provisional' && parseDiagnostics.provisionalModel && (
                       <p>
