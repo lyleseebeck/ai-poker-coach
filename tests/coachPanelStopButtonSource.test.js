@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const COACH_PANEL_PATH = '/Users/lyleseebeck/Documents/AI Poker Coach/src/components/CoachPanel.jsx';
+const COACH_PANEL_PATH = '/Users/lyleseebeck/Code/ai-poker-coach/src/components/CoachPanel.jsx';
 
 test('CoachPanel keeps a stop button inside the diagnostics header while coaching is running', async () => {
   const source = await readFile(COACH_PANEL_PATH, 'utf8');

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const COACH_PANEL_PATH = '/Users/lyleseebeck/Documents/AI Poker Coach/src/components/CoachPanel.jsx';
+const COACH_PANEL_PATH = '/Users/lyleseebeck/Code/ai-poker-coach/src/components/CoachPanel.jsx';
 
 test('CoachPanel source removes the debug opt-in control and keeps the debug payload disclosure', async () => {
   const source = await readFile(COACH_PANEL_PATH, 'utf8');
