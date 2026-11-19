@@ -7,7 +7,7 @@ log="$(mktemp)"
 step() {
   local name="$1"; shift
   if "$@" >"$log" 2>&1; then
-    echo "ok: $name $(grep -E "^(Ran |OK|FAILED)" "$log" | tr "
+    echo "ok: $name $(grep -E "^(Ran |OK|FAILED|ℹ (pass|fail) )" "$log" | tr "
 " " ")"
   else
     echo "FAIL: $name"; tail -20 "$log"; exit 1
@@ -17,7 +17,7 @@ step() {
 step unittest npm test
 step build npm run build
 port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
-npx vite preview --port "$port" --strictPort >"$log.preview" 2>&1 &
+npx vite preview --host 127.0.0.1 --port "$port" --strictPort >"$log.preview" 2>&1 &
 server=$!
 trap 'kill "$server" 2>/dev/null || true' EXIT
 for _ in $(seq 1 30); do
