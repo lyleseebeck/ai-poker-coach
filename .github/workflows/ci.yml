@@ -28,6 +28,21 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - name: Preview smoke check (page returns HTTP 200)
+        run: |
+          npx vite preview --host 127.0.0.1 --port 4173 --strictPort >"$RUNNER_TEMP/preview.log" 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          code=none
+          for _ in $(seq 1 30); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4173/ || true)"
+            [ "$code" = "200" ] && break
+            sleep 1
+          done
+          if [ "$code" != "200" ]; then
+            echo "Preview returned $code"; tail -20 "$RUNNER_TEMP/preview.log"; exit 1
+          fi
+          echo "preview 200"
 
   secret-scan:
     runs-on: ubuntu-latest
